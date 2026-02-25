@@ -18,5 +18,16 @@ router.get("/stats", auth, requireRole("admin"), async (req, res) => {
   res.json({ totalProducts, totalCustomers, totalBills, lowStock });
 });
 
+router.get("/settings", auth, requireRole("admin"), (req, res) => {
+  res.json({
+    companyName: process.env.COMPANY_NAME || "Click2Kart",
+    companyGst: process.env.COMPANY_GST || "",
+    companyAddress: process.env.COMPANY_ADDRESS || "",
+    companyPhone: process.env.COMPANY_PHONE || "",
+    companyEmail: process.env.COMPANY_EMAIL || "",
+    lowStockThreshold: Number(process.env.LOW_STOCK_THRESHOLD ?? 5)
+  });
+});
+
 export default router;
 
