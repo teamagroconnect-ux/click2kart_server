@@ -4,6 +4,7 @@ import { auth, requireRole } from "../middleware/auth.js";
 import Customer from "../models/Customer.js";
 import Product from "../models/Product.js";
 import Bill from "../models/Bill.js";
+import Order from "../models/Order.js";
 import { computeTotals, generateInvoiceNumber } from "../lib/invoice.js";
 import { streamInvoicePDF } from "../lib/pdf.js";
 import Coupon from "../models/Coupon.js";
@@ -120,6 +121,29 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
       );
       billDoc = billDoc[0];
       await Customer.updateOne({ _id: cust._id }, { $push: { purchaseHistory: billDoc._id } }, { session });
+      
+      // Also create an entry in Order history for this bill
+      await Order.create([{
+        type: "BILL",
+        customer: {
+          name: cust.name,
+          phone: cust.phone,
+          email: cust.email || ""
+        },
+        items: billItems.map(it => ({
+          product: it.product,
+          name: it.name,
+          price: it.price,
+          gst: it.gst,
+          quantity: it.quantity,
+          lineTotal: it.lineTotal,
+          image: it.image
+        })),
+        totalEstimate: billDoc.payable,
+        status: "FULFILLED",
+        notes: `Bill generated: ${invoiceNumber}`
+      }], { session });
+
       if (appliedCoupon) {
         await Coupon.updateOne({ _id: appliedCoupon._id }, { $inc: { usedCount: 1 } }, { session });
       }
