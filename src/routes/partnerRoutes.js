@@ -14,6 +14,21 @@ async function computeSummaryForCoupon(coupon) {
   const totalSales = bills.reduce((sum, b) => sum + (b.payable || 0), 0);
   const commissionPercent = Number(coupon.partnerCommissionPercent || 0);
   const totalCommission = (totalSales * commissionPercent) / 100;
+  
+  // Category breakdown
+  const categoryMap = {};
+  for (const b of bills) {
+    const billCommission = (b.payable * commissionPercent) / 100;
+    // Distribute bill commission across its items' categories proportionately
+    for (const it of b.items) {
+      const cat = it.category || "General";
+      const itemWeight = it.lineTotal / (b.total || 1);
+      const itemComm = billCommission * itemWeight;
+      categoryMap[cat] = (categoryMap[cat] || 0) + itemComm;
+    }
+  }
+  const categoryBreakdown = Object.entries(categoryMap).map(([name, value]) => ({ name, value }));
+
   const payouts = await PartnerPayout.find({ couponCode: code }).sort({ createdAt: -1 });
   const totalPaid = payouts.reduce((sum, p) => sum + (p.amount || 0), 0);
   const balance = totalCommission - totalPaid;
@@ -28,6 +43,7 @@ async function computeSummaryForCoupon(coupon) {
     totalCommission,
     totalPaid,
     balance,
+    categoryBreakdown,
     payouts
   };
 }
@@ -61,6 +77,7 @@ router.get("/summary/:code", async (req, res) => {
     totalCommission: summary.totalCommission,
     totalPaid: summary.totalPaid,
     balance: summary.balance,
+    categoryBreakdown: summary.categoryBreakdown,
     payouts: safePayouts
   });
 });

@@ -10,7 +10,13 @@ export const computeTotals = (products, items) => {
     if (!p) throw new Error("product_not_found");
     const qty = Number(it.quantity);
     if (!Number.isInteger(qty) || qty <= 0) throw new Error("invalid_quantity");
-    const lineSubtotal = p.price * qty;
+
+    let effectivePrice = p.price;
+    if (p.bulkDiscountQuantity > 0 && qty >= p.bulkDiscountQuantity) {
+      effectivePrice = Math.max(0, p.price - (p.bulkDiscountPriceReduction || 0));
+    }
+
+    const lineSubtotal = effectivePrice * qty;
     const lineGst = Number((((lineSubtotal * (p.gst || 0)) / 100)).toFixed(2));
     const lineTotal = lineSubtotal + lineGst;
     subtotal += lineSubtotal;
@@ -20,6 +26,7 @@ export const computeTotals = (products, items) => {
     enriched.push({
       product: p._id,
       name: p.name,
+      category: p.category || "General",
       price: p.price,
       gst: rate,
       quantity: qty,
