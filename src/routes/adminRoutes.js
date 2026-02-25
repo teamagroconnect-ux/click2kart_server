@@ -29,5 +29,18 @@ router.get("/settings", auth, requireRole("admin"), (req, res) => {
   });
 });
 
+router.get("/customers", auth, requireRole("admin"), async (req, res) => {
+  const { q } = req.query;
+  const filter = {};
+  if (q) {
+    filter.$or = [
+      { name: { $regex: String(q), $options: "i" } },
+      { phone: { $regex: String(q), $options: "i" } }
+    ];
+  }
+  const items = await Customer.find(filter).sort({ createdAt: -1 });
+  res.json(items);
+});
+
 export default router;
 
