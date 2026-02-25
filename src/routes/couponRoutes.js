@@ -9,7 +9,7 @@ const toUpper = (s) => (s || "").toString().trim().toUpperCase();
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
   const code = toUpper(req.body?.code);
-  const { type, value, minAmount, expiryDate, usageLimit, partnerId, partnerName, partnerEmail, partnerPhone, partnerCommissionPercent, maxTotalSales, isActive } = req.body || {};
+  const { type, value, minAmount, expiryDate, usageLimit, partnerId, partnerName, partnerEmail, partnerPhone, partnerCommissionPercent, maxTotalSales, isActive, password } = req.body || {};
   if (!code || !type || value == null || !expiryDate) return res.status(400).json({ error: "missing_fields" });
   const exists = await Coupon.findOne({ code });
   if (exists) return res.status(409).json({ error: "duplicate_code" });
@@ -39,6 +39,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     partnerPhone: pPhone,
     partnerCommissionPercent: Number(partnerCommissionPercent || 0),
     maxTotalSales: Number(maxTotalSales || 0),
+    password: password ? String(password).trim() : undefined,
     isActive: isActive === false ? false : true
   });
   res.status(201).json(doc);
@@ -64,6 +65,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (req.body?.partnerPhone != null) payload.partnerPhone = req.body.partnerPhone;
   if (req.body?.partnerCommissionPercent != null) payload.partnerCommissionPercent = Number(req.body.partnerCommissionPercent);
   if (req.body?.maxTotalSales != null) payload.maxTotalSales = Number(req.body.maxTotalSales);
+  if (req.body?.password !== undefined) payload.password = req.body.password ? String(req.body.password).trim() : undefined;
   if (req.body?.partnerId != null) {
     if (!mongoose.isValidObjectId(req.body.partnerId)) return res.status(400).json({ error: "invalid_partner" });
     const partner = await (await import("../models/Partner.js")).default.findById(req.body.partnerId);

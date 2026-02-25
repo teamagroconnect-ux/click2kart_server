@@ -49,11 +49,18 @@ async function computeSummaryForCoupon(coupon) {
 }
 
 // Public endpoint for partners to view their summary using coupon code
-router.get("/summary/:code", async (req, res) => {
+router.post("/summary/:code", async (req, res) => {
   const code = toUpper(req.params.code);
-  if (!code) return res.status(400).json({ error: "invalid_code" });
+  const { password } = req.body || {};
+  
+  if (!password) return res.status(400).json({ error: "missing_password" });
+
   const coupon = await Coupon.findOne({ code, isActive: true });
   if (!coupon) return res.status(404).json({ error: "not_found" });
+  
+  if (coupon.password && coupon.password !== password) {
+    return res.status(401).json({ error: "invalid_password" });
+  }
   if (!coupon.partnerName && !coupon.partnerCommissionPercent) {
     return res.status(400).json({ error: "no_partner_configured" });
   }
