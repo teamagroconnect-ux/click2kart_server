@@ -7,7 +7,8 @@ const orderItemSchema = new mongoose.Schema(
     price: { type: Number, required: true },
     gst: { type: Number, required: true },
     quantity: { type: Number, required: true },
-    lineTotal: { type: Number, required: true }
+    lineTotal: { type: Number, required: true },
+    image: { type: String, default: "" }
   },
   { _id: false }
 );

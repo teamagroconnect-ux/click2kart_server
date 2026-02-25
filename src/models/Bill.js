@@ -9,7 +9,8 @@ const itemSchema = new mongoose.Schema(
     quantity: { type: Number, required: true },
     lineSubtotal: { type: Number, required: true },
     lineGst: { type: Number, required: true },
-    lineTotal: { type: Number, required: true }
+    lineTotal: { type: Number, required: true },
+    image: { type: String, default: "" }
   },
   { _id: false }
 );

@@ -48,6 +48,11 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
   }
 
   const totals = computeTotals(products, items);
+  const billItems = totals.items.map(it => {
+    const p = products.find(x => x._id.toString() === it.product.toString());
+    return { ...it, image: p?.images?.[0]?.url || "" };
+  });
+
   let discount = 0;
   let appliedCoupon = null;
   if (couponCode) {
@@ -100,7 +105,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
           {
             invoiceNumber,
             customer: cust._id,
-            items: totals.items,
+            items: billItems,
             subtotal: totals.subtotal,
             gstTotal: totals.gstTotal,
             total: totals.total,

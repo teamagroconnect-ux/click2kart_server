@@ -15,9 +15,33 @@ router.post("/", async (req, res) => {
   const products = await Product.find({ _id: { $in: ids }, isActive: true });
   if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
   const totals = computeTotals(products, items);
-  const orderItems = totals.items.map((it) => ({ product: it.product, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal }));
-  const doc = await Order.create({ customer: { name: customer.name, phone: customer.phone, email: customer.email || "" }, items: orderItems, totalEstimate: totals.total, status: "NEW", notes: notes || "" });
+  const orderItems = totals.items.map((it) => {
+    const p = products.find(x => x._id.toString() === it.product.toString());
+    return {
+      product: it.product,
+      name: it.name,
+      price: it.price,
+      gst: it.gst,
+      quantity: it.quantity,
+      lineTotal: it.lineTotal,
+      image: p?.images?.[0]?.url || ""
+    };
+  });
+  const doc = await Order.create({
+    customer: { name: customer.name, phone: customer.phone, email: customer.email || "" },
+    items: orderItems,
+    totalEstimate: totals.total,
+    status: "NEW",
+    notes: notes || ""
+  });
   res.status(201).json(doc);
+});
+
+router.get("/my-orders", async (req, res) => {
+  const { phone } = req.query;
+  if (!phone) return res.status(400).json({ error: "missing_phone" });
+  const items = await Order.find({ "customer.phone": phone }).sort({ createdAt: -1 });
+  res.json(items);
 });
 
 router.get("/", auth, requireRole("admin"), async (req, res) => {
