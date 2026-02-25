@@ -24,7 +24,16 @@ const orderSchema = new mongoose.Schema(
     },
     items: { type: [orderItemSchema], required: true },
     totalEstimate: { type: Number, required: true },
-    status: { type: String, enum: ["NEW", "CONFIRMED", "CANCELLED", "FULFILLED"], default: "NEW" },
+    paymentMethod: { type: String, enum: ["CASH", "RAZORPAY"], default: "CASH" },
+    paymentStatus: { type: String, enum: ["PENDING", "PAID", "FAILED", "REFUNDED"], default: "PENDING" },
+    razorpayOrderId: { type: String },
+    razorpayPaymentId: { type: String },
+    razorpaySignature: { type: String },
+    status: { 
+      type: String, 
+      enum: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED", "CANCELLED", "FULFILLED"], 
+      default: "NEW" 
+    },
     notes: { type: String, default: "" }
   },
   { timestamps: true }

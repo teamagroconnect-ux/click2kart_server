@@ -83,9 +83,20 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const updated = await Coupon.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
-  if (!updated) return res.status(404).json({ error: "not_found" });
-  res.json({ success: true });
+  
+  const coupon = await Coupon.findById(req.params.id);
+  if (!coupon) return res.status(404).json({ error: "not_found" });
+
+  if (coupon.isActive) {
+    // If active, just disable it first
+    coupon.isActive = false;
+    await coupon.save();
+    return res.json({ success: true, message: "disabled", doc: coupon });
+  } else {
+    // If already inactive, delete permanently
+    await Coupon.findByIdAndDelete(req.params.id);
+    return res.json({ success: true, message: "deleted" });
+  }
 });
 
 router.post("/validate", async (req, res) => {

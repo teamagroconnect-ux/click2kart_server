@@ -36,7 +36,7 @@ export const sendOTP = async (email, otp) => {
       <div style="background: #f3f4f6; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #111827; border-radius: 8px;">
         ${otp}
       </div>
-      <p style="margin-top: 20px;">This OTP is valid for 10 minutes. Do not share this with anyone.</p>
+      <p style="margin-top: 20px;">This 4-digit OTP is valid for 10 minutes. Do not share this with anyone.</p>
       <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
       <p style="font-size: 12px; color: #6b7280; text-align: center;">
         &copy; ${new Date().getFullYear()} Click2Kart Premium. All rights reserved.

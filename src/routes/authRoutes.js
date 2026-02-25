@@ -40,7 +40,7 @@ router.post("/customer/signup", async (req, res) => {
   const exists = await Customer.findOne({ $or: [{ email: email.toLowerCase() }, { phone }] });
   if (exists) return res.status(400).json({ error: "user_already_exists" });
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
   await OTP.findOneAndUpdate(
@@ -119,7 +119,7 @@ router.post("/customer/forgot-password", async (req, res) => {
   const user = await Customer.findOne({ email: email.toLowerCase(), isActive: true });
   if (!user) return res.status(404).json({ error: "user_not_found" });
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   await OTP.findOneAndUpdate(
