@@ -1,9 +1,16 @@
 import jwt from "jsonwebtoken";
 
 export const auth = (req, res, next) => {
+  let token = "";
   const header = req.headers.authorization || "";
-  const [type, token] = header.split(" ");
-  if (type !== "Bearer" || !token) return res.status(401).json({ error: "unauthorized" });
+  const [type, authToken] = header.split(" ");
+  if (type === "Bearer" && authToken) {
+    token = authToken;
+  } else if (req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) return res.status(401).json({ error: "unauthorized" });
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = payload;

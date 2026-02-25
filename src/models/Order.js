@@ -16,6 +16,7 @@ const orderItemSchema = new mongoose.Schema(
 const orderSchema = new mongoose.Schema(
   {
     type: { type: String, default: "ENQUIRY" },
+    billId: { type: mongoose.Schema.Types.ObjectId, ref: "Bill" },
     customer: {
       name: { type: String, required: true },
       phone: { type: String, required: true },

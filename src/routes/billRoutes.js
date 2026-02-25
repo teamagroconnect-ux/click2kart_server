@@ -125,6 +125,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
       // Also create an entry in Order history for this bill
       await Order.create([{
         type: "BILL",
+        billId: billDoc._id,
         customer: {
           name: cust.name,
           phone: cust.phone,
