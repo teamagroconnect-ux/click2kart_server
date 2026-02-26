@@ -3,6 +3,8 @@ import cors from "cors";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import { connectIfConfigured } from "./lib/db.js";
+import http from "http";
+import { initSocket } from "./lib/socket.js";
 import Admin from "./models/Admin.js";
 import productRoutes from "./routes/productRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -61,7 +63,9 @@ const ensureDefaultAdmin = async () => {
 const start = async () => {
   await connectIfConfigured();
   await ensureDefaultAdmin();
-  app.listen(PORT, () => {
+  const server = http.createServer(app);
+  initSocket(server);
+  server.listen(PORT, () => {
     console.log(`server running on port ${PORT}`);
   });
 };

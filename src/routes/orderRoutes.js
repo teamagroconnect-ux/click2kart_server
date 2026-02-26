@@ -7,6 +7,7 @@ import { computeTotals } from "../lib/invoice.js";
 import razorpay from "../lib/razorpay.js";
 import crypto from "crypto";
 import { createBillFromData } from "../lib/billing.js";
+import { notifyAdmin } from "../lib/socket.js";
 
 const router = express.Router();
 
@@ -68,6 +69,10 @@ router.post("/", async (req, res) => {
     razorpayOrderId: razorpayOrder?.id,
     notes: notes || ""
   });
+
+  if (paymentMethod === "CASH") {
+    notifyAdmin("new_offline_order", doc);
+  }
 
   res.status(201).json({
     order: doc,
