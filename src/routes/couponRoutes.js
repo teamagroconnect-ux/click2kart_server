@@ -66,11 +66,21 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (req.body?.partnerCommissionPercent != null) payload.partnerCommissionPercent = Number(req.body.partnerCommissionPercent);
   if (req.body?.maxTotalSales != null) payload.maxTotalSales = Number(req.body.maxTotalSales);
   if (req.body?.password !== undefined) payload.password = req.body.password ? String(req.body.password).trim() : undefined;
-  if (req.body?.partnerId != null) {
-    if (!mongoose.isValidObjectId(req.body.partnerId)) return res.status(400).json({ error: "invalid_partner" });
-    const partner = await (await import("../models/Partner.js")).default.findById(req.body.partnerId);
-    if (!partner) return res.status(404).json({ error: "partner_not_found" });
-    payload.partner = partner._id;
+  if (req.body?.partnerId !== undefined) {
+    if (req.body.partnerId === "") {
+      payload.partner = null;
+      payload.partnerName = "";
+      payload.partnerEmail = "";
+      payload.partnerPhone = "";
+    } else {
+      if (!mongoose.isValidObjectId(req.body.partnerId)) return res.status(400).json({ error: "invalid_partner" });
+      const partner = await (await import("../models/Partner.js")).default.findById(req.body.partnerId);
+      if (!partner) return res.status(404).json({ error: "partner_not_found" });
+      payload.partner = partner._id;
+      payload.partnerName = partner.name || "";
+      payload.partnerEmail = partner.email || "";
+      payload.partnerPhone = partner.phone || "";
+    }
   }
   if (payload.code) {
     const dup = await Coupon.findOne({ code: payload.code, _id: { $ne: req.params.id } });

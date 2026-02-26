@@ -21,8 +21,9 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
       cust = await Customer.create({
         name: String(customerData.name).trim(),
         phone,
-        email: customerData.email || "",
-        address: customerData.address || ""
+        email: customerData.email || undefined,
+        address: customerData.address || "",
+        isVerified: false // Admin created customers are not verified by default
       });
     }
   }

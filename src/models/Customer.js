@@ -5,8 +5,8 @@ const customerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     phone: { type: String, required: true, trim: true, unique: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    password: { type: String, required: true, minlength: 6 },
+    email: { type: String, unique: true, lowercase: true, trim: true, sparse: true },
+    password: { type: String, minlength: 6 },
     address: { type: String, default: "" },
     purchaseHistory: [{ type: mongoose.Schema.Types.ObjectId, ref: "Bill" }],
     isVerified: { type: Boolean, default: false },
