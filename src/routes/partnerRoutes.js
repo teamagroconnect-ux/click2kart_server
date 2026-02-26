@@ -48,47 +48,6 @@ async function computeSummaryForCoupon(coupon) {
   };
 }
 
-// Public endpoint for partners to view their summary using coupon code
-router.post("/summary/:code", async (req, res) => {
-  const code = toUpper(req.params.code);
-  const { password } = req.body || {};
-  
-  if (!password) return res.status(400).json({ error: "missing_password" });
-
-  const coupon = await Coupon.findOne({ code, isActive: true });
-  if (!coupon) return res.status(404).json({ error: "not_found" });
-  
-  if (coupon.password && coupon.password !== password) {
-    return res.status(401).json({ error: "invalid_password" });
-  }
-  if (!coupon.partnerName && !coupon.partnerCommissionPercent) {
-    return res.status(400).json({ error: "no_partner_configured" });
-  }
-  const summary = await computeSummaryForCoupon(coupon);
-  // Do not expose internal payout IDs to partners
-  const safePayouts = summary.payouts.map((p) => ({
-    createdAt: p.createdAt,
-    amount: p.amount,
-    method: p.method,
-    utr: p.utr,
-    razorpayPaymentId: p.razorpayPaymentId,
-    notes: p.notes
-  }));
-  res.json({
-    code: summary.code,
-    partnerName: summary.partnerName,
-    partnerEmail: summary.partnerEmail,
-    partnerPhone: summary.partnerPhone,
-    commissionPercent: summary.commissionPercent,
-    totalSales: summary.totalSales,
-    totalCommission: summary.totalCommission,
-    totalPaid: summary.totalPaid,
-    balance: summary.balance,
-    categoryBreakdown: summary.categoryBreakdown,
-    payouts: safePayouts
-  });
-});
-
 // Admin: list all partner coupons with aggregates
 router.get("/", auth, requireRole("admin"), async (req, res) => {
   const coupons = await Coupon.find({
