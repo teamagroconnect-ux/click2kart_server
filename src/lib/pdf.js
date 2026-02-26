@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import path from "path";
 
 export const streamInvoicePDF = (res, bill, customer) => {
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
@@ -11,9 +12,13 @@ export const streamInvoicePDF = (res, bill, customer) => {
   const companyAddress = process.env.COMPANY_ADDRESS || "Shop No. 12, Main Market, Mumbai - 400001";
   const companyPhone = process.env.COMPANY_PHONE || "+91 98765 43210";
   const companyEmail = process.env.COMPANY_EMAIL || "contact@shreelifestyles.com";
+  const companyLogo = process.env.COMPANY_LOGO || path.resolve("assets", "logo.png");
 
-  // --- Header ---
-  doc.fillColor("#1e293b").fontSize(20).text(companyName, { stroke: true });
+  try {
+    doc.image(companyLogo, 50, 40, { fit: [140, 40] });
+  } catch {}
+  doc.fillColor("#7c3aed").rect(50, 90, 495, 3).fill();
+  doc.fillColor("#1e293b").fontSize(20).text(companyName, 50, 100);
   doc.fillColor("#64748b").fontSize(9).text(companyAddress);
   doc.text(`Phone: ${companyPhone} | Email: ${companyEmail}`);
   if (companyGst) doc.text(`GSTIN: ${companyGst}`);
@@ -40,10 +45,9 @@ export const streamInvoicePDF = (res, bill, customer) => {
   doc.fillColor("#64748b").text(`Payment:`, 350, topInfo + 45);
   doc.fillColor("#0f172a").text(bill.paymentType, 430, topInfo + 45);
 
-  // --- Table Header ---
   const tableTop = 230;
-  doc.rect(50, tableTop, 495, 25).fill("#f8fafc");
-  doc.fillColor("#475569").fontSize(9);
+  doc.rect(50, tableTop, 495, 25).fill("#ede9fe");
+  doc.fillColor("#4c1d95").fontSize(9);
   doc.text("SR.", 60, tableTop + 8);
   doc.text("ITEM DESCRIPTION", 90, tableTop + 8);
   doc.text("QTY", 300, tableTop + 8);
@@ -51,12 +55,10 @@ export const streamInvoicePDF = (res, bill, customer) => {
   doc.text("GST %", 410, tableTop + 8);
   doc.text("AMOUNT", 480, tableTop + 8);
 
-  // --- Table Rows ---
   let rowY = tableTop + 35;
   doc.fillColor("#1e293b").fontSize(10);
   
   bill.items.forEach((it, idx) => {
-    // Check for page break
     if (rowY > 700) {
       doc.addPage();
       rowY = 50;
@@ -73,7 +75,6 @@ export const streamInvoicePDF = (res, bill, customer) => {
     doc.moveTo(50, rowY - 5).lineTo(545, rowY - 5).strokeColor("#f1f5f9").lineWidth(0.5).stroke();
   });
 
-  // --- Totals ---
   const totalsTop = Math.max(rowY + 20, 400);
   const totalsX = 350;
 
@@ -89,13 +90,12 @@ export const streamInvoicePDF = (res, bill, customer) => {
   }
 
   const finalTotalY = totalsTop + (bill.discount > 0 ? 70 : 50);
-  doc.rect(totalsX - 10, finalTotalY - 10, 205, 35).fill("#f1f5f9");
-  doc.fillColor("#0f172a").fontSize(12).text("GRAND TOTAL:", totalsX, finalTotalY);
-  doc.fontSize(14).text(`₹${bill.payable.toFixed(2)}`, 460, finalTotalY, { bold: true });
+  doc.rect(totalsX - 10, finalTotalY - 10, 205, 35).fill("#ede9fe");
+  doc.fillColor("#4c1d95").fontSize(12).text("GRAND TOTAL:", totalsX, finalTotalY);
+  doc.fillColor("#0f172a").fontSize(14).text(`₹${bill.payable.toFixed(2)}`, 460, finalTotalY);
 
-  // --- Footer ---
   doc.fillColor("#94a3b8").fontSize(8).text(
-    "Thank you for shopping with Shree Lifestyles! This is a computer-generated invoice.",
+    "Thank you for shopping with us! This is a computer-generated invoice.",
     50,
     780,
     { align: "center", width: 495 }
