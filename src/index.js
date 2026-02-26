@@ -28,7 +28,7 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
+  res.json({ status: "uddhab das", time: new Date().toISOString() });
 });
 
 app.use("/api/products", productRoutes);

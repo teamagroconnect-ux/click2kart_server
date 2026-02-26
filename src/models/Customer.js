@@ -27,7 +27,6 @@ customerSchema.methods.comparePassword = function (candidate) {
 };
 
 customerSchema.index({ phone: 1 }, { unique: true });
-customerSchema.index({ email: 1 }, { unique: true });
 
 export default mongoose.models.Customer || mongoose.model("Customer", customerSchema);
 
