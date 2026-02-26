@@ -3,6 +3,7 @@ import { auth, requireRole } from "../middleware/auth.js";
 import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
 import Bill from "../models/Bill.js";
+import { sendEmail } from "../lib/mailer.js";
 
 const router = express.Router();
 
@@ -42,5 +43,27 @@ router.get("/customers", auth, requireRole("admin"), async (req, res) => {
   res.json(items);
 });
 
-export default router;
+router.post("/customers/:id/approve", auth, requireRole("admin"), async (req, res) => {
+  const id = req.params.id;
+  const updated = await Customer.findByIdAndUpdate(id, { isActive: true }, { new: true });
+  if (!updated) return res.status(404).json({ error: "not_found" });
+  if (updated.email) {
+    try {
+      await sendEmail({
+        to: updated.email,
+        subject: `Welcome to ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        html: `
+          <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color:#111827;margin:0 0 12px;font-weight:800">Welcome, ${updated.name}!</h2>
+            <p style="color:#374151;line-height:1.6">Your B2B account has been approved. You can now sign in to view wholesale prices and place orders.</p>
+            <a href="${process.env.CLIENT_URL || "http://localhost:5173"}/login" style="display:inline-block;margin-top:16px;padding:12px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Login Now</a>
+            <p style="color:#6b7280;margin-top:24px;font-size:12px">&copy; ${new Date().getFullYear()} ${process.env.COMPANY_NAME || "Click2Kart"}</p>
+          </div>
+        `
+      });
+    } catch {}
+  }
+  res.json({ approved: true, customer: updated });
+});
 
+export default router;

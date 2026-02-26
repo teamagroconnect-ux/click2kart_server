@@ -71,21 +71,13 @@ router.post("/customer/verify-otp", async (req, res) => {
     email: email.toLowerCase(),
     phone,
     password,
-    isVerified: true
+    isVerified: true,
+    isActive: false
   });
 
   await OTP.deleteOne({ _id: record._id });
 
-  const token = jwt.sign(
-    { id: customer._id.toString(), role: "customer", email: customer.email },
-    process.env.JWT_SECRET,
-    { expiresIn: "30d" }
-  );
-
-  res.json({
-    token,
-    user: { id: customer._id.toString(), name: customer.name, email: customer.email, role: "customer" }
-  });
+  res.json({ message: "application_submitted" });
 });
 
 // CUSTOMER LOGIN
@@ -156,4 +148,3 @@ router.post("/customer/reset-password", async (req, res) => {
 });
 
 export default router;
-

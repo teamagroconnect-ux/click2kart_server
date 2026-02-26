@@ -4,8 +4,31 @@ import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import StockTxn from "../models/StockTxn.js";
+import jwt from "jsonwebtoken";
 
 const router = express.Router();
+
+const isViewerAuthorized = (req) => {
+  try {
+    const header = req.headers.authorization || "";
+    const [type, token] = header.split(" ");
+    if (type === "Bearer" && token) {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      return !!payload;
+    }
+  } catch {}
+  return false;
+};
+
+const sanitizeProduct = (p, canViewPrice) => {
+  if (canViewPrice) return p;
+  const obj = p.toObject ? p.toObject() : { ...p };
+  delete obj.price;
+  delete obj.gst;
+  delete obj.bulkDiscountQuantity;
+  delete obj.bulkDiscountPriceReduction;
+  return obj;
+};
 
 router.get("/", async (req, res) => {
   const connected = mongoose.connection.readyState === 1;
@@ -20,7 +43,9 @@ router.get("/", async (req, res) => {
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit);
-  res.json({ page, limit, total, items });
+  const canViewPrice = isViewerAuthorized(req);
+  const safeItems = items.map((it) => sanitizeProduct(it, canViewPrice));
+  res.json({ page, limit, total, items: safeItems });
 });
 
 router.get("/low-stock", auth, requireRole("admin"), async (req, res) => {
@@ -34,7 +59,8 @@ router.get("/:id", async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const item = await Product.findById(req.params.id);
   if (!item || !item.isActive) return res.status(404).json({ error: "not_found" });
-  res.json(item);
+  const canViewPrice = isViewerAuthorized(req);
+  res.json(sanitizeProduct(item, canViewPrice));
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
