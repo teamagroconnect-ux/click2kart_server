@@ -22,12 +22,21 @@ const isViewerAuthorized = (req) => {
   return false;
 };
 
-const sanitizeProduct = (p, canViewPrice) => {
-  if (canViewPrice) return p;
+const withDerived = (p) => {
   const obj = p.toObject ? p.toObject() : { ...p };
+  if (obj.mrp != null && obj.price != null && obj.mrp > obj.price) {
+    obj.discountPercent = Math.round(((Number(obj.mrp) - Number(obj.price)) / Number(obj.mrp)) * 100);
+  }
+  return obj;
+};
+
+const sanitizeProduct = (p, canViewPrice) => {
+  let obj = withDerived(p);
+  if (canViewPrice) return obj;
   delete obj.price;
   delete obj.gst;
   delete obj.mrp;
+  delete obj.discountPercent;
   delete obj.bulkDiscountQuantity;
   delete obj.bulkDiscountPriceReduction;
   return obj;
