@@ -18,6 +18,8 @@ import partnerRoutes from "./routes/partnerRoutes.js";
 import publicRoutes from "./routes/publicRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import partnerAccountRoutes from "./routes/partnerAccountRoutes.js";
+import cartRoutes from "./routes/cartRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
 
 dotenv.config();
 
@@ -39,6 +41,8 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/cart", cartRoutes);
+app.use("/api/user", userRoutes);
 app.use("/api/public", publicRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/partners", partnerRoutes);
