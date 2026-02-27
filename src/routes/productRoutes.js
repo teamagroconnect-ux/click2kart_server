@@ -27,6 +27,7 @@ const sanitizeProduct = (p, canViewPrice) => {
   const obj = p.toObject ? p.toObject() : { ...p };
   delete obj.price;
   delete obj.gst;
+  delete obj.mrp;
   delete obj.bulkDiscountQuantity;
   delete obj.bulkDiscountPriceReduction;
   return obj;
@@ -37,14 +38,17 @@ router.get("/", async (req, res) => {
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
   const query = { isActive: true };
   if (req.query.category) query.category = req.query.category.toString().toLowerCase();
-  if (req.query.q) query.name = { $regex: req.query.q.toString(), $options: "i" };
+  const q = req.query.q ? String(req.query.q).trim() : "";
+  if (q && q.length < 2) query.name = { $regex: q, $options: "i" };
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+  const useText = q && q.length >= 2;
+  if (useText) query.$text = { $search: q };
   const total = await Product.countDocuments(query);
-  const items = await Product.find(query)
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit);
+  let cursor = Product.find(query);
+  if (useText) cursor = cursor.select({ score: { $meta: "textScore" } }).sort({ score: { $meta: "textScore" }, createdAt: -1 });
+  else cursor = cursor.sort({ createdAt: -1 });
+  const items = await cursor.skip((page - 1) * limit).limit(limit);
   const canViewPrice = isViewerAuthorized(req);
   const safeItems = items.map((it) => sanitizeProduct(it, canViewPrice));
   res.json({ page, limit, total, items: safeItems });
@@ -66,7 +70,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction } = req.body || {};
+  const { name, price, category, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -86,6 +90,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     images: imgArr,
     stock: Number(stock),
     gst: gst == null ? 0 : Number(gst),
+    mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
     bulkDiscountQuantity: Number(bulkDiscountQuantity || 0),
     bulkDiscountPriceReduction: Number(bulkDiscountPriceReduction || 0)
   });
@@ -94,7 +99,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "price", "category", "images", "stock", "gst", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction"];
+  const allowed = ["name", "description", "price", "category", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.category != null) {
@@ -141,6 +146,32 @@ router.get("/:id/stock-history", auth, requireRole("admin"), async (req, res) =>
   res.json({ page, limit, count: items.length, items });
 });
 
+router.get("/suggest", async (req, res) => {
+  const connected = mongoose.connection.readyState === 1;
+  if (!connected) return res.json([]);
+  const q = req.query.q ? String(req.query.q).trim() : "";
+  if (!q) return res.json([]);
+  const base = { isActive: true };
+  let items = [];
+  if (q.length >= 2) {
+    items = await Product.find({ ...base, $text: { $search: q } })
+      .select({ name: 1, category: 1, images: 1, score: { $meta: "textScore" } })
+      .sort({ score: { $meta: "textScore" } })
+      .limit(8);
+  } else {
+    items = await Product.find({ ...base, name: { $regex: q, $options: "i" } })
+      .select({ name: 1, category: 1, images: 1 })
+      .sort({ createdAt: -1 })
+      .limit(8);
+  }
+  const out = items.map((d) => ({
+    id: d._id.toString(),
+    name: d.name,
+    category: d.category,
+    image: d.images?.[0]?.url || ""
+  }));
+  res.json(out);
+});
 router.post("/:id/reviews", auth, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const { rating, comment } = req.body || {};
