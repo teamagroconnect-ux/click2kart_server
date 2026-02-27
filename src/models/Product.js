@@ -16,10 +16,11 @@ const productSchema = new mongoose.Schema(
     gst: { type: Number, default: 0, min: 0 },
     bulkDiscountQuantity: { type: Number, default: 0, min: 0 },
     bulkDiscountPriceReduction: { type: Number, default: 0, min: 0 },
-    isActive: { type: Boolean, default: true }
+    isActive: { type: Boolean, default: true },
+    ratingAvg: { type: Number, default: 0, min: 0, max: 5 },
+    ratingCount: { type: Number, default: 0, min: 0 }
   },
   { timestamps: true }
 );
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);
-

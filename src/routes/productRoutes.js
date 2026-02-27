@@ -4,6 +4,8 @@ import Product from "../models/Product.js";
 import Category from "../models/Category.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import StockTxn from "../models/StockTxn.js";
+import Bill from "../models/Bill.js";
+import Review from "../models/Review.js";
 import jwt from "jsonwebtoken";
 
 const router = express.Router();
@@ -139,6 +141,28 @@ router.get("/:id/stock-history", auth, requireRole("admin"), async (req, res) =>
   res.json({ page, limit, count: items.length, items });
 });
 
- 
+router.post("/:id/reviews", auth, async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { rating, comment } = req.body || {};
+  const r = Number(rating);
+  if (!Number.isFinite(r) || r < 1 || r > 5) return res.status(400).json({ error: "invalid_rating" });
+  const product = await Product.findById(req.params.id);
+  if (!product || !product.isActive) return res.status(404).json({ error: "not_found" });
+  const eligible = await Bill.exists({ customer: req.user?.id, "items.product": product._id });
+  if (!eligible) return res.status(403).json({ error: "not_eligible" });
+  await Review.findOneAndUpdate(
+    { product: product._id, customer: req.user.id },
+    { rating: r, comment: comment || "" },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  const agg = await Review.aggregate([
+    { $match: { product: product._id } },
+    { $group: { _id: "$product", count: { $sum: 1 }, avg: { $avg: "$rating" } } }
+  ]);
+  const summary = agg[0] || { count: 0, avg: 0 };
+  await Product.updateOne({ _id: product._id }, { ratingAvg: Number(summary.avg || 0).toFixed ? Number(summary.avg.toFixed(2)) : Number(summary.avg || 0), ratingCount: summary.count || 0 });
+  const updated = await Product.findById(product._id).select({ ratingAvg: 1, ratingCount: 1 });
+  res.status(201).json({ ratingAvg: updated.ratingAvg || 0, ratingCount: updated.ratingCount || 0 });
+});
 
 export default router;
