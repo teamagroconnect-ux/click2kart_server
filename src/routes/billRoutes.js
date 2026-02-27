@@ -4,7 +4,6 @@ import { auth, requireRole } from "../middleware/auth.js";
 import Customer from "../models/Customer.js";
 import Product from "../models/Product.js";
 import Bill from "../models/Bill.js";
-import Order from "../models/Order.js";
 import { computeTotals, generateInvoiceNumber } from "../lib/invoice.js";
 import { streamInvoicePDF } from "../lib/pdf.js";
 import { renderInvoiceHTML } from "../lib/invoiceHtml.js";
