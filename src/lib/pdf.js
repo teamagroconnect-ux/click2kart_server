@@ -7,7 +7,7 @@ export const streamInvoicePDF = (res, bill, customer) => {
   res.setHeader("Content-Disposition", `inline; filename=${bill.invoiceNumber}.pdf`);
   doc.pipe(res);
 
-  const companyName = process.env.COMPANY_NAME || "SHREE LIFESTYLES";
+  const companyName = process.env.COMPANY_NAME || "Click2Kart";
   const companyGst = process.env.COMPANY_GST || "27ABCDE1234F1Z5";
   const companyAddress = process.env.COMPANY_ADDRESS || "Shop No. 12, Main Market, Mumbai - 400001";
   const companyPhone = process.env.COMPANY_PHONE || "+91 98765 43210";
