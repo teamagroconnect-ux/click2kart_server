@@ -18,6 +18,15 @@ const productSchema = new mongoose.Schema(
     mrp: { type: Number, min: 0 },
     bulkDiscountQuantity: { type: Number, default: 0, min: 0 },
     bulkDiscountPriceReduction: { type: Number, default: 0, min: 0 },
+    bulkTiers: {
+      type: [
+        {
+          quantity: { type: Number, min: 1 },
+          priceReduction: { type: Number, min: 0 }
+        }
+      ],
+      default: []
+    },
     isActive: { type: Boolean, default: true },
     isVerified: { type: Boolean, default: true },
     ratingAvg: { type: Number, default: 0, min: 0, max: 5 },

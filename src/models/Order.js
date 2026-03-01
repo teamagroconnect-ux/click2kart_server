@@ -34,7 +34,7 @@ const orderSchema = new mongoose.Schema(
       enum: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED", "CANCELLED", "FULFILLED"], 
       default: "NEW" 
     },
-    notes: { type: String, default: "" }
+    notes: { type: String, default: "" },
     feedbackRating: { type: Number, min: 1, max: 5 }
   },
   { timestamps: true }

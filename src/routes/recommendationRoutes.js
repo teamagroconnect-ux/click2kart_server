@@ -4,6 +4,7 @@ import Product from "../models/Product.js";
 import Order from "../models/Order.js";
 import Customer from "../models/Customer.js";
 import { auth, requireRole } from "../middleware/auth.js";
+import jwt from "jsonwebtoken";
 
 const router = express.Router();
 
@@ -27,6 +28,17 @@ const sanitizeForViewer = (p, canViewPrice) => {
   return obj;
 };
 
+const isViewerAuthorized = (req) => {
+  try {
+    const header = req.headers.authorization || "";
+    const [type, token] = header.split(" ");
+    if (type === "Bearer" && token) {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      return !!payload;
+    }
+  } catch {}
+  return false;
+};
 // Reorder suggestions for logged-in customer
 router.get("/reorder", auth, requireRole("customer"), async (req, res) => {
   const cust = await Customer.findById(req.user.id).select("phone");
@@ -62,7 +74,8 @@ router.get("/frequently-bought/:productId", async (req, res) => {
   ]);
   const ids = agg.map(a => a._id);
   const docs = await Product.find({ _id: { $in: ids }, isActive: true });
-  res.json(docs.map(d => sanitizeForViewer(d, false)));
+  const canView = isViewerAuthorized(req);
+  res.json(docs.map(d => sanitizeForViewer(d, canView)));
 });
 
 export default router;

@@ -39,6 +39,7 @@ const sanitizeProduct = (p, canViewPrice) => {
   delete obj.discountPercent;
   delete obj.bulkDiscountQuantity;
   delete obj.bulkDiscountPriceReduction;
+  delete obj.bulkTiers;
   return obj;
 };
 
@@ -93,7 +94,7 @@ router.get("/:id/recommendations", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp } = req.body || {};
+  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -123,14 +124,20 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     gst: gst == null ? 0 : Number(gst),
     mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
     bulkDiscountQuantity: Number(bulkDiscountQuantity || 0),
-    bulkDiscountPriceReduction: Number(bulkDiscountPriceReduction || 0)
+    bulkDiscountPriceReduction: Number(bulkDiscountPriceReduction || 0),
+    bulkTiers: Array.isArray(bulkTiers)
+      ? bulkTiers
+          .map(t => ({ quantity: Number(t?.quantity), priceReduction: Number(t?.priceReduction) }))
+          .filter(t => Number.isFinite(t.quantity) && t.quantity > 0 && Number.isFinite(t.priceReduction) && t.priceReduction >= 0)
+          .sort((a,b) => a.quantity - b.quantity)
+      : []
   });
   res.status(201).json(doc);
 });
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction"];
+  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.category != null) {
@@ -152,6 +159,12 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
     }
   }
   if (Array.isArray(payload.images)) payload.images = payload.images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url);
+  if (Array.isArray(payload.bulkTiers)) {
+    payload.bulkTiers = payload.bulkTiers
+      .map(t => ({ quantity: Number(t?.quantity), priceReduction: Number(t?.priceReduction) }))
+      .filter(t => Number.isFinite(t.quantity) && t.quantity > 0 && Number.isFinite(t.priceReduction) && t.priceReduction >= 0)
+      .sort((a,b) => a.quantity - b.quantity);
+  }
   const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
