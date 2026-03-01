@@ -79,6 +79,19 @@ router.get("/:id", async (req, res) => {
   res.json(sanitizeProduct(item, canViewPrice));
 });
 
+// Similar products by category
+router.get("/:id/recommendations", async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const base = await Product.findById(req.params.id).select({ category: 1 });
+  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 8));
+  const items = await Product.find({ isActive: true, category: base.category, _id: { $ne: base._id } })
+    .sort({ stock: -1, createdAt: -1 })
+    .limit(limit);
+  const canViewPrice = isViewerAuthorized(req);
+  res.json(items.map((it) => sanitizeProduct(it, canViewPrice)));
+});
+
 router.post("/", auth, requireRole("admin"), async (req, res) => {
   const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });

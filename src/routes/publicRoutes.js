@@ -1,5 +1,6 @@
 import express from "express";
 import Category from "../models/Category.js";
+import Product from "../models/Product.js";
 import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
@@ -47,7 +48,19 @@ async function computeSummaryForCoupon(coupon) {
 }
 
 router.get("/categories", async (req, res) => {
-  const items = await Category.find({ isActive: true }).sort({ name: 1 }).select({ name: 1, description: 1 });
+  const cats = await Category.find({ isActive: true }).sort({ name: 1 }).select({ name: 1, description: 1 });
+  const items = [];
+  for (const c of cats) {
+    const sample = await Product.findOne({ isActive: true, category: c.name, "images.0": { $exists: true } })
+      .sort({ createdAt: -1 })
+      .select({ images: 1 });
+    items.push({
+      _id: c._id,
+      name: c.name,
+      description: c.description || "",
+      image: sample?.images?.[0]?.url || ""
+    });
+  }
   res.json(items);
 });
 
@@ -94,4 +107,3 @@ router.post("/partner/summary/:code", async (req, res) => {
 });
 
 export default router;
-
