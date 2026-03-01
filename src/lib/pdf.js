@@ -11,7 +11,7 @@ export const streamInvoicePDF = (res, bill, customer) => {
   const companyGst = process.env.COMPANY_GST || "27ABCDE1234F1Z5";
   const companyAddress = process.env.COMPANY_ADDRESS || "Shop No. 12, Main Market, Mumbai - 400001";
   const companyPhone = process.env.COMPANY_PHONE || "+91 98765 43210";
-  const companyEmail = process.env.COMPANY_EMAIL || "contact@shreelifestyles.com";
+  const companyEmail = process.env.COMPANY_EMAIL || "support@click2kart.net";
   const companyLogo = process.env.COMPANY_LOGO || path.resolve("assets", "logo.png");
 
   try {

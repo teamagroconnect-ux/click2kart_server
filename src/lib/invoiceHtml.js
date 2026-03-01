@@ -9,7 +9,7 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
   const companyName = company.name || process.env.COMPANY_NAME || "Click2Kart Pvt Ltd";
   const companyAddress = company.address || process.env.COMPANY_ADDRESS || "Plot 21, Sector 18, Electronic City, Bengaluru 560100";
   const companyPhone = company.phone || process.env.COMPANY_PHONE || "+91 79788 80244";
-  const companyEmail = company.email || process.env.COMPANY_EMAIL || "support@click2kart";
+  const companyEmail = company.email || process.env.COMPANY_EMAIL || "support@click2kart.net";
   const companyGst = company.gst || process.env.COMPANY_GST || "29ABCDE1234F1Z5";
   const logo = company.logo || process.env.COMPANY_LOGO || "click2kart-logo.png";
 
