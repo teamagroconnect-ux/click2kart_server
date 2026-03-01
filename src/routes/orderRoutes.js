@@ -189,4 +189,19 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
   res.json(updated);
 });
 
+// Customer delivery feedback (rating only after order fulfilled)
+router.post("/:id/feedback", auth, requireRole("customer"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const r = Number(req.body?.rating);
+  if (!Number.isFinite(r) || r < 1 || r > 5) return res.status(400).json({ error: "invalid_rating" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  const cust = await Customer.findById(req.user.id).select("phone");
+  if (!cust || cust.phone !== order.customer.phone) return res.status(403).json({ error: "forbidden" });
+  if (order.status !== "FULFILLED") return res.status(400).json({ error: "not_delivered" });
+  order.feedbackRating = r;
+  await order.save();
+  res.json({ success: true, feedbackRating: r });
+});
+
 export default router;

@@ -35,9 +35,9 @@ const orderSchema = new mongoose.Schema(
       default: "NEW" 
     },
     notes: { type: String, default: "" }
+    feedbackRating: { type: Number, min: 1, max: 5 }
   },
   { timestamps: true }
 );
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);
-
