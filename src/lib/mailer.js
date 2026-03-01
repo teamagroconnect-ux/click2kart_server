@@ -1,28 +1,40 @@
-import nodemailer from "nodemailer";
+import axios from "axios";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: process.env.SMTP_PORT || 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  }
-});
+async function getAccessToken() {
+  const res = await axios.post("https://accounts.zoho.in/oauth/v2/token", null, {
+    params: {
+      refresh_token: process.env.ZOHO_REFRESH_TOKEN,
+      client_id: process.env.ZOHO_CLIENT_ID,
+      client_secret: process.env.ZOHO_CLIENT_SECRET,
+      grant_type: "refresh_token"
+    }
+  });
+  return res.data.access_token;
+}
 
 export const sendEmail = async ({ to, subject, text, html }) => {
+  const content = html || (text ? `<pre>${text}</pre>` : "");
   try {
-    const info = await transporter.sendMail({
-      from: `"${process.env.COMPANY_NAME || "Click2Kart"}" <${process.env.MAIL_FROM || process.env.SMTP_USER}>`,
-      to,
-      subject,
-      text,
-      html
-    });
-    return info;
-  } catch (error) {
-    console.error("Email sending failed:", error);
-    throw error;
+    const accessToken = await getAccessToken();
+    await axios.post(
+      `https://mail.zoho.in/api/accounts/${process.env.ZOHO_ACCOUNT_ID}/messages`,
+      {
+        fromAddress: process.env.ZOHO_MAIL_FROM,
+        toAddress: to,
+        subject,
+        content
+      },
+      {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`
+        }
+      }
+    );
+    return { sent: true };
+  } catch (err) {
+    const detail = err?.response?.data || err.message;
+    console.error("Email sending failed:", detail);
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
 };
 
