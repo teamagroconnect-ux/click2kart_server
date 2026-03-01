@@ -36,6 +36,19 @@ const orderSchema = new mongoose.Schema(
     },
     notes: { type: String, default: "" },
     feedbackRating: { type: Number, min: 1, max: 5 }
+    shipping: {
+      provider: { type: String },
+      waybill: { type: String },
+      status: { type: String },
+      trackingUrl: { type: String }
+    },
+    shippingAddress: {
+      line1: { type: String },
+      line2: { type: String },
+      city: { type: String },
+      state: { type: String },
+      pincode: { type: String }
+    }
   },
   { timestamps: true }
 );
