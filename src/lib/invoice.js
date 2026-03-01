@@ -12,8 +12,9 @@ export const computeTotals = (products, items) => {
     const qty = Number(it.quantity);
     if (!Number.isInteger(qty) || qty <= 0) throw new Error("invalid_quantity");
 
-    let effectivePrice = p.price;
-    if (p.bulkDiscountQuantity > 0 && qty >= p.bulkDiscountQuantity) {
+    const variant = it.variantId ? (p.variants || []).find(v => v._id.toString() === it.variantId) : null;
+    let effectivePrice = variant?.price ?? p.price;
+    if (!variant && p.bulkDiscountQuantity > 0 && qty >= p.bulkDiscountQuantity) {
       effectivePrice = Math.max(0, p.price - (p.bulkDiscountPriceReduction || 0));
     }
 
@@ -24,11 +25,13 @@ export const computeTotals = (products, items) => {
     gstTotal += lineGst;
     const rate = p.gst || 0;
     map.set(rate, (map.get(rate) || 0) + lineGst);
+    const attrText = variant ? Object.entries(variant.attributes || {}).filter(([_, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", ") : "";
     enriched.push({
       product: p._id,
-      name: p.name,
+      variantId: variant ? variant._id : undefined,
+      name: variant ? `${p.name} (${attrText})` : p.name,
       category: p.category || "General",
-      price: p.price,
+      price: effectivePrice,
       gst: rate,
       quantity: qty,
       lineSubtotal,

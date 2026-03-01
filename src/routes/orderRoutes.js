@@ -15,7 +15,7 @@ const router = express.Router();
 router.post("/", auth, requireRole("customer"), async (req, res) => {
   const { items, notes, paymentMethod } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
-  if (!["CASH", "RAZORPAY"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
+  if (!["CASH", "RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
 
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
@@ -48,10 +48,13 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   });
 
   let razorpayOrder = null;
-  if (paymentMethod === "RAZORPAY") {
+  if (paymentMethod === "RAZORPAY" || paymentMethod === "COD_20") {
     try {
+      const amountPaise = paymentMethod === "COD_20"
+        ? Math.round(totals.total * 0.2 * 100)
+        : Math.round(totals.total * 100);
       razorpayOrder = await razorpay.orders.create({
-        amount: Math.round(totals.total * 100), // in paise
+        amount: amountPaise, // in paise
         currency: "INR",
         receipt: `receipt_${Date.now()}`
       });
@@ -71,7 +74,9 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     paymentMethod,
     paymentStatus: "PENDING",
     razorpayOrderId: razorpayOrder?.id,
-    notes: notes || ""
+    notes: notes || "",
+    codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
+    codDueAmount: paymentMethod === "COD_20" ? Number((totals.total * 0.8).toFixed(2)) : 0
   });
 
   if (paymentMethod === "CASH") {
@@ -98,28 +103,60 @@ router.post("/verify-payment", async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ error: "order_not_found" });
 
-    order.paymentStatus = "PAID";
-    order.status = "CONFIRMED";
+    if (order.paymentMethod === "COD_20") {
+      order.paymentStatus = "PARTIAL";
+      order.status = "CONFIRMED";
+      order.advancePaidAmount = Number((order.totalEstimate * 0.2).toFixed(2));
+    } else {
+      order.paymentStatus = "PAID";
+      order.status = "CONFIRMED";
+    }
     order.razorpayPaymentId = razorpay_payment_id;
     order.razorpaySignature = razorpay_signature;
     await order.save();
 
-    // Trigger automatic billing
+    // Trigger automatic billing only for full online payments
+    if (order.paymentMethod === "RAZORPAY") {
     try {
       await createBillFromData({
         customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
-        items: order.items.map(it => ({ product: it.product, quantity: it.quantity })),
+        items: order.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
         paymentType: "RAZORPAY",
         existingOrderId: order._id
       });
     } catch (err) {
-      console.error("Auto-billing failed after payment:", err);
+        console.error("Auto-billing failed after payment:", err);
+      }
     }
     
     res.json({ success: true, message: "payment_verified" });
   } else {
     res.status(400).json({ error: "invalid_signature" });
   }
+});
+
+// Finalize COD and generate bill (admin)
+router.patch("/:id/finalize-cod", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  if (order.paymentMethod !== "COD_20") return res.status(400).json({ error: "not_cod_order" });
+  if (order.paymentStatus !== "PARTIAL") return res.status(400).json({ error: "advance_not_paid" });
+
+  order.paymentStatus = "PAID";
+  await order.save();
+
+  try {
+    await createBillFromData({
+      customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
+      items: order.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+      paymentType: "CASH",
+      existingOrderId: order._id
+    });
+  } catch (err) {
+    console.error("Billing failed after COD finalize:", err);
+  }
+  res.json({ success: true });
 });
 
 // Admin approves Cash Payment

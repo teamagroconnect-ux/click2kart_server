@@ -28,6 +28,26 @@ const productSchema = new mongoose.Schema(
       ],
       default: []
     },
+    variants: {
+      type: [
+        {
+          _id: { type: mongoose.Schema.Types.ObjectId, default: () => new mongoose.Types.ObjectId() },
+          attributes: {
+            color: { type: String, default: "" },
+            ram: { type: String, default: "" },
+            storage: { type: String, default: "" },
+            capacity: { type: String, default: "" }
+          },
+          price: { type: Number, min: 0 },
+          mrp: { type: Number, min: 0 },
+          stock: { type: Number, min: 0, default: 0 },
+          sku: { type: String },
+          isActive: { type: Boolean, default: true },
+          images: { type: [imageSchema], default: [] }
+        }
+      ],
+      default: []
+    },
     isActive: { type: Boolean, default: true },
     isVerified: { type: Boolean, default: true },
     ratingAvg: { type: Number, default: 0, min: 0, max: 5 },

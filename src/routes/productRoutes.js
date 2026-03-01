@@ -40,6 +40,12 @@ const sanitizeProduct = (p, canViewPrice) => {
   delete obj.bulkDiscountQuantity;
   delete obj.bulkDiscountPriceReduction;
   delete obj.bulkTiers;
+  if (Array.isArray(obj.variants)) {
+    obj.variants = obj.variants.map(v => {
+      const { price, mrp, ...rest } = v;
+      return rest;
+    });
+  }
   return obj;
 };
 
@@ -94,7 +100,7 @@ router.get("/:id/recommendations", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers } = req.body || {};
+  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -130,14 +136,29 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
           .map(t => ({ quantity: Number(t?.quantity), priceReduction: Number(t?.priceReduction) }))
           .filter(t => Number.isFinite(t.quantity) && t.quantity > 0 && Number.isFinite(t.priceReduction) && t.priceReduction >= 0)
           .sort((a,b) => a.quantity - b.quantity)
-      : []
+      : [],
+    variants: Array.isArray(variants) ? variants.map(v => ({
+      _id: v._id || new mongoose.Types.ObjectId(),
+      attributes: {
+        color: String(v?.attributes?.color || v?.color || ""),
+        ram: String(v?.attributes?.ram || v?.ram || ""),
+        storage: String(v?.attributes?.storage || v?.storage || ""),
+        capacity: String(v?.attributes?.capacity || v?.capacity || "")
+      },
+      price: Number(v?.price ?? price),
+      mrp: v?.mrp == null ? undefined : Number(v?.mrp),
+      stock: Number(v?.stock ?? 0),
+      sku: v?.sku ? String(v.sku).trim() : undefined,
+      isActive: v?.isActive != null ? !!v.isActive : true,
+      images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
+    })) : []
   });
   res.status(201).json(doc);
 });
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers"];
+  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.category != null) {
@@ -165,9 +186,124 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
       .filter(t => Number.isFinite(t.quantity) && t.quantity > 0 && Number.isFinite(t.priceReduction) && t.priceReduction >= 0)
       .sort((a,b) => a.quantity - b.quantity);
   }
+  if (Array.isArray(payload.variants)) {
+    payload.variants = payload.variants.map(v => ({
+      _id: v._id || new mongoose.Types.ObjectId(),
+      attributes: {
+        color: String(v?.attributes?.color || v?.color || ""),
+        ram: String(v?.attributes?.ram || v?.ram || ""),
+        storage: String(v?.attributes?.storage || v?.storage || ""),
+        capacity: String(v?.attributes?.capacity || v?.capacity || "")
+      },
+      price: Number(v?.price ?? 0),
+      mrp: v?.mrp == null ? undefined : Number(v?.mrp),
+      stock: Number(v?.stock ?? 0),
+      sku: v?.sku ? String(v.sku).trim() : undefined,
+      isActive: v?.isActive != null ? !!v.isActive : true,
+      images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
+    }));
+  }
   const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
+});
+
+// Variant operations
+router.post("/:id/variants", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const p = await Product.findById(req.params.id);
+  if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
+  const v = req.body || {};
+  const sku = v?.sku ? String(v.sku).trim() : undefined;
+  if (sku) {
+    const conflict = await Product.findOne({ "variants.sku": sku });
+    if (conflict) return res.status(400).json({ error: "sku_exists" });
+  }
+  const attrs = {
+    color: String(v?.attributes?.color || v?.color || ""),
+    ram: String(v?.attributes?.ram || v?.ram || ""),
+    storage: String(v?.attributes?.storage || v?.storage || ""),
+    capacity: String(v?.attributes?.capacity || v?.capacity || "")
+  };
+  const duplicate = (p.variants || []).find(x =>
+    (x.attributes?.color || "") === attrs.color &&
+    (x.attributes?.ram || "") === attrs.ram &&
+    (x.attributes?.storage || "") === attrs.storage &&
+    (x.attributes?.capacity || "") === attrs.capacity
+  );
+  if (duplicate) return res.status(400).json({ error: "duplicate_variant" });
+  const newVar = {
+    _id: new mongoose.Types.ObjectId(),
+    attributes: attrs,
+    price: Number(v?.price ?? 0),
+    mrp: v?.mrp == null ? undefined : Number(v?.mrp),
+    stock: Number(v?.stock ?? 0),
+    sku,
+    isActive: v?.isActive != null ? !!v.isActive : true,
+    images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
+  };
+  p.variants = [...(p.variants || []), newVar];
+  await p.save();
+  res.status(201).json(newVar);
+});
+
+router.put("/:id/variants/:vid", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const p = await Product.findById(req.params.id);
+  if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
+  const idx = (p.variants || []).findIndex(v => v._id.toString() === req.params.vid);
+  if (idx === -1) return res.status(404).json({ error: "variant_not_found" });
+  const v = p.variants[idx];
+  const payload = req.body || {};
+  if (payload.sku) {
+    const sku = String(payload.sku).trim();
+    const conflict = await Product.findOne({ "variants.sku": sku, _id: { $ne: p._id } });
+    if (conflict) return res.status(400).json({ error: "sku_exists" });
+    v.sku = sku;
+  }
+  if (payload.attributes) {
+    const attrs = {
+      color: String(payload?.attributes?.color || v.attributes.color || ""),
+      ram: String(payload?.attributes?.ram || v.attributes.ram || ""),
+      storage: String(payload?.attributes?.storage || v.attributes.storage || ""),
+      capacity: String(payload?.attributes?.capacity || v.attributes.capacity || "")
+    };
+    const duplicate = (p.variants || []).find((x, i) =>
+      i !== idx &&
+      (x.attributes?.color || "") === attrs.color &&
+      (x.attributes?.ram || "") === attrs.ram &&
+      (x.attributes?.storage || "") === attrs.storage &&
+      (x.attributes?.capacity || "") === attrs.capacity
+    );
+    if (duplicate) return res.status(400).json({ error: "duplicate_variant" });
+    v.attributes = attrs;
+  }
+  if (payload.price != null) v.price = Number(payload.price);
+  if (payload.mrp != null) v.mrp = Number(payload.mrp);
+  if (payload.stock != null) v.stock = Number(payload.stock);
+  if (payload.isActive != null) v.isActive = !!payload.isActive;
+  if (Array.isArray(payload.images)) v.images = payload.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url);
+  p.markModified("variants");
+  await p.save();
+  res.json(v);
+});
+
+router.patch("/:id/variants/:vid/stock", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const qty = Number(req.body?.quantity);
+  if (!Number.isInteger(qty) || qty <= 0) return res.status(400).json({ error: "invalid_quantity" });
+  const p = await Product.findById(req.params.id);
+  if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
+  const idx = (p.variants || []).findIndex(v => v._id.toString() === req.params.vid);
+  if (idx === -1) return res.status(404).json({ error: "variant_not_found" });
+  const v = p.variants[idx];
+  if ((v.stock || 0) - qty < 0) return res.status(400).json({ error: "insufficient_stock" });
+  const before = v.stock || 0;
+  v.stock = before - qty;
+  p.markModified("variants");
+  await p.save();
+  await StockTxn.create({ product: p._id, type: req.body?.reason === "ADJUST" ? "ADJUST" : "SOLD", quantity: qty, before, after: v.stock, refType: "MANUAL", note: req.body?.note || "", variantId: v._id.toString() });
+  res.json({ id: v._id.toString(), stock: v.stock });
 });
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {

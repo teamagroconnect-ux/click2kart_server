@@ -36,13 +36,21 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   for (const it of items) {
     const p = products.find((x) => x._id.toString() === (it.productId || it.product).toString());
     const qty = Number(it.quantity);
-    if (!p || p.stock < qty) throw new Error(`insufficient_stock:${p?.name || 'unknown'}`);
+    if (!p) throw new Error(`insufficient_stock:unknown`);
+    if (it.variantId) {
+      const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+      if (!v || (v.stock || 0) < qty) throw new Error(`insufficient_stock:${p.name}`);
+    } else {
+      if (p.stock < qty) throw new Error(`insufficient_stock:${p.name}`);
+    }
   }
 
   const totals = computeTotals(products, items.map(it => ({ ...it, productId: it.productId || it.product })));
   const billItems = totals.items.map(it => {
     const p = products.find(x => x._id.toString() === it.product.toString());
-    return { ...it, image: p?.images?.[0]?.url || "", hsn: p?.hsnCode || "" };
+    const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
+    const image = v?.images?.[0]?.url || p?.images?.[0]?.url || "";
+    return { ...it, image, hsn: p?.hsnCode || "" };
   });
 
   let discount = 0;
@@ -65,22 +73,41 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
     await session.withTransaction(async () => {
       for (const it of items) {
         const p = products.find((x) => x._id.toString() === (it.productId || it.product).toString());
-        await Product.updateOne(
-          { _id: p._id, stock: { $gte: it.quantity } },
-          { $inc: { stock: -Number(it.quantity) } },
-          { session }
-        );
-        await StockTxn.create([
-          {
-            product: p._id,
-            type: "SOLD",
-            quantity: Number(it.quantity),
-            before: p.stock,
-            after: p.stock - Number(it.quantity),
-            refType: "BILL",
-            refId: invoiceNumber
-          }
-        ], { session });
+        if (it.variantId) {
+          const idx = (p.variants || []).findIndex(v => v._id.toString() === String(it.variantId));
+          const before = p.variants[idx]?.stock || 0;
+          p.variants[idx].stock = before - Number(it.quantity);
+          await p.save({ session });
+          await StockTxn.create([
+            {
+              product: p._id,
+              type: "SOLD",
+              quantity: Number(it.quantity),
+              before,
+              after: p.variants[idx].stock,
+              refType: "BILL",
+              refId: invoiceNumber,
+              variantId: String(it.variantId)
+            }
+          ], { session });
+        } else {
+          await Product.updateOne(
+            { _id: p._id, stock: { $gte: it.quantity } },
+            { $inc: { stock: -Number(it.quantity) } },
+            { session }
+          );
+          await StockTxn.create([
+            {
+              product: p._id,
+              type: "SOLD",
+              quantity: Number(it.quantity),
+              before: p.stock,
+              after: p.stock - Number(it.quantity),
+              refType: "BILL",
+              refId: invoiceNumber
+            }
+          ], { session });
+        }
       }
 
       const bills = await Bill.create(

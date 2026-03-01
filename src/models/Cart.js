@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 const cartItemSchema = new mongoose.Schema(
   {
     product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+    variantId: { type: String },
     quantity: { type: Number, required: true, min: 1 },
     addedAt: { type: Date, default: Date.now }
   },
@@ -20,4 +21,3 @@ const cartSchema = new mongoose.Schema(
 cartSchema.index({ customer: 1 }, { unique: true });
 
 export default mongoose.models.Cart || mongoose.model("Cart", cartSchema);
-
