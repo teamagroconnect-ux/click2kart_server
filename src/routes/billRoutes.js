@@ -36,6 +36,21 @@ router.get("/:id", auth, requireRole("admin"), async (req, res) => {
   res.json(bill);
 });
 
+router.get("/search", auth, requireRole("admin"), async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (!q) return res.json([]);
+  const bills = await Bill.find({
+    $or: [
+      { invoiceNumber: { $regex: q, $options: "i" } },
+      { couponCode: { $regex: q, $options: "i" } }
+    ]
+  })
+    .limit(20)
+    .sort({ createdAt: -1 })
+    .populate("customer");
+  res.json(bills);
+});
+
 router.get("/:id/pdf", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const bill = await Bill.findById(req.params.id).populate("customer");

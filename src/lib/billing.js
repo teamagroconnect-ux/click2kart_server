@@ -42,7 +42,7 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   const totals = computeTotals(products, items.map(it => ({ ...it, productId: it.productId || it.product })));
   const billItems = totals.items.map(it => {
     const p = products.find(x => x._id.toString() === it.product.toString());
-    return { ...it, image: p?.images?.[0]?.url || "" };
+    return { ...it, image: p?.images?.[0]?.url || "", hsn: p?.hsnCode || "" };
   });
 
   let discount = 0;

@@ -87,6 +87,7 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
           <div class="k">Order ID</div><div class="v">${order?._id || ""}</div>
           <div class="k">Invoice Date</div><div class="v">${new Date(bill.date).toLocaleDateString("en-IN")}</div>
           <div class="k">Payment Mode</div><div class="v">${bill.paymentType}</div>
+          <div class="k">Place of Supply</div><div class="v">${order?.shippingAddress?.state || customer?.kyc?.state || (process.env.COMPANY_STATE || "KA")}</div>
         </div>
       </div>
       <div class="col block">
@@ -95,6 +96,7 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
           <div class="k">Customer</div><div class="v">${customer?.name || ""}</div>
           <div class="k">Address</div><div class="v">${customer?.address || ""}</div>
           <div class="k">Phone</div><div class="v">${customer?.phone || ""}</div>
+          <div class="k">GSTIN</div><div class="v">${customer?.kyc?.gstin || ""}</div>
         </div>
       </div>
     </div>

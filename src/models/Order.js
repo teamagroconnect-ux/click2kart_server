@@ -35,7 +35,7 @@ const orderSchema = new mongoose.Schema(
       default: "NEW" 
     },
     notes: { type: String, default: "" },
-    feedbackRating: { type: Number, min: 1, max: 5 }
+    feedbackRating: { type: Number, min: 1, max: 5 },
     shipping: {
       provider: { type: String },
       waybill: { type: String },

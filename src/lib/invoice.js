@@ -1,4 +1,5 @@
 import Bill from "../models/Bill.js";
+import Counter from "../models/Counter.js";
 
 export const computeTotals = (products, items) => {
   const enriched = [];
@@ -45,13 +46,12 @@ export const generateInvoiceNumber = async () => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  let attempt = 0;
-  while (attempt < 5) {
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    const num = `INV-${y}${m}${day}-${rand}`;
-    const exists = await Bill.findOne({ invoiceNumber: num }).lean();
-    if (!exists) return num;
-    attempt += 1;
-  }
-  return `INV-${y}${m}${day}-${Date.now().toString().slice(-4)}`;
+  const key = `invoice:${y}${m}${day}`;
+  const doc = await Counter.findOneAndUpdate(
+    { key },
+    { $inc: { value: 1 } },
+    { upsert: true, new: true }
+  );
+  const seq = String(doc.value).padStart(4, "0");
+  return `INV-${y}${m}${day}-${seq}`;
 };
