@@ -20,6 +20,7 @@ import uploadRoutes from "./routes/uploadRoutes.js";
 import partnerAccountRoutes from "./routes/partnerAccountRoutes.js";
 import cartRoutes from "./routes/cartRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
 
 dotenv.config();
 
@@ -47,6 +48,7 @@ app.use("/api/public", publicRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/partner-accounts", partnerAccountRoutes);
+app.use("/api/webhooks", webhookRoutes);
 
 const PORT = process.env.PORT || 5000;
 

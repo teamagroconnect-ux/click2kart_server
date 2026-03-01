@@ -49,6 +49,10 @@ router.post("/customers/:id/approve", auth, requireRole("admin"), async (req, re
   if (!updated) return res.status(404).json({ error: "not_found" });
   if (updated.email) {
     try {
+      const base =
+        (process.env.CLIENT_URL && process.env.CLIENT_URL.replace(/\/$/, "")) ||
+        (req.headers.origin && String(req.headers.origin).replace(/\/$/, "")) ||
+        "https://click2kart.net";
       await sendEmail({
         to: updated.email,
         subject: `Welcome to ${process.env.COMPANY_NAME || "Click2Kart"}`,
@@ -56,7 +60,7 @@ router.post("/customers/:id/approve", auth, requireRole("admin"), async (req, re
           <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
             <h2 style="color:#111827;margin:0 0 12px;font-weight:800">Welcome, ${updated.name}!</h2>
             <p style="color:#374151;line-height:1.6">Your B2B account has been approved. You can now sign in to view wholesale prices and place orders.</p>
-            <a href="${process.env.CLIENT_URL || "http://localhost:5173"}/login" style="display:inline-block;margin-top:16px;padding:12px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Login Now</a>
+            <a href="${base}/login" style="display:inline-block;margin-top:16px;padding:12px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Login Now</a>
             <p style="color:#6b7280;margin-top:24px;font-size:12px">&copy; ${new Date().getFullYear()} ${process.env.COMPANY_NAME || "Click2Kart"}</p>
           </div>
         `
