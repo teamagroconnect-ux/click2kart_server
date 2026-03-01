@@ -10,7 +10,18 @@ const customerSchema = new mongoose.Schema(
     address: { type: String, default: "" },
     purchaseHistory: [{ type: mongoose.Schema.Types.ObjectId, ref: "Bill" }],
     isVerified: { type: Boolean, default: false },
-    isActive: { type: Boolean, default: true }
+    isActive: { type: Boolean, default: true },
+    kyc: {
+      businessName: { type: String, default: "" },
+      gstin: { type: String, default: "" },
+      pan: { type: String, default: "" },
+      addressLine1: { type: String, default: "" },
+      addressLine2: { type: String, default: "" },
+      city: { type: String, default: "" },
+      state: { type: String, default: "" },
+      pincode: { type: String, default: "" }
+    },
+    isKycComplete: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
@@ -29,4 +40,3 @@ customerSchema.methods.comparePassword = function (candidate) {
 customerSchema.index({ phone: 1 }, { unique: true });
 
 export default mongoose.models.Customer || mongoose.model("Customer", customerSchema);
-

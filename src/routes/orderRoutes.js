@@ -17,8 +17,9 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["CASH", "RAZORPAY"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
 
-  const cust = await Customer.findById(req.user.id).select("name phone email");
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
+  if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
 
   const ids = items.map((x) => x.productId);
   const products = await Product.find({ _id: { $in: ids }, isActive: true });

@@ -8,16 +8,19 @@ import { sendEmail } from "../lib/mailer.js";
 const router = express.Router();
 
 router.get("/stats", auth, requireRole("admin"), async (req, res) => {
-  const [totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock] = await Promise.all([
+  const Order = (await import("../models/Order.js")).default;
+  const [totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock, newOrders, pendingCash] = await Promise.all([
     Product.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: false }),
     Bill.countDocuments({}),
     Product.find({ isActive: true, stock: { $lte: Number(process.env.LOW_STOCK_THRESHOLD ?? 5) } })
       .sort({ stock: 1 })
-      .limit(10)
+      .limit(10),
+    Order.countDocuments({ status: "NEW" }),
+    Order.countDocuments({ status: "PENDING_CASH_APPROVAL" })
   ]);
-  res.json({ totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock });
+  res.json({ totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock, newOrders, pendingCash });
 });
 
 router.get("/settings", auth, requireRole("admin"), (req, res) => {
@@ -42,6 +45,24 @@ router.get("/customers", auth, requireRole("admin"), async (req, res) => {
   }
   const items = await Customer.find(filter).sort({ createdAt: -1 });
   res.json(items);
+});
+
+router.get("/customers/:id", auth, requireRole("admin"), async (req, res) => {
+  const id = req.params.id;
+  const user = await Customer.findById(id).select("-password");
+  if (!user) return res.status(404).json({ error: "not_found" });
+  const Order = (await import("../models/Order.js")).default;
+  const Bill = (await import("../models/Bill.js")).default;
+  const orders = await Order.find({ "customer.phone": user.phone }).sort({ createdAt: -1 }).limit(10);
+  const bills = await Bill.find({ customer: id }).sort({ createdAt: -1 }).limit(10);
+  res.json({ user, orders, bills });
+});
+
+router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => {
+  const id = req.params.id;
+  const removed = await Customer.findByIdAndDelete(id);
+  if (!removed) return res.status(404).json({ error: "not_found" });
+  res.json({ deleted: true });
 });
 
 router.post("/customers/:id/approve", auth, requireRole("admin"), async (req, res) => {
