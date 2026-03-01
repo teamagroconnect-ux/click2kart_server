@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
+import Customer from "../models/Customer.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import { computeTotals } from "../lib/invoice.js";
 import razorpay from "../lib/razorpay.js";
@@ -11,11 +12,13 @@ import { notifyAdmin } from "../lib/socket.js";
 
 const router = express.Router();
 
-router.post("/", async (req, res) => {
-  const { customer, items, notes, paymentMethod } = req.body || {};
-  if (!customer || !customer.name || !customer.phone) return res.status(400).json({ error: "missing_customer" });
+router.post("/", auth, requireRole("customer"), async (req, res) => {
+  const { items, notes, paymentMethod } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["CASH", "RAZORPAY"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
+
+  const cust = await Customer.findById(req.user.id).select("name phone email");
+  if (!cust) return res.status(404).json({ error: "customer_not_found" });
 
   const ids = items.map((x) => x.productId);
   const products = await Product.find({ _id: { $in: ids }, isActive: true });
@@ -60,7 +63,7 @@ router.post("/", async (req, res) => {
   const orderStatus = paymentMethod === "CASH" ? "PENDING_CASH_APPROVAL" : "NEW";
 
   const doc = await Order.create({
-    customer: { name: customer.name, phone: customer.phone, email: customer.email || "" },
+    customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
     items: orderItems,
     totalEstimate: totals.total,
     status: orderStatus,
@@ -179,4 +182,3 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
 });
 
 export default router;
-

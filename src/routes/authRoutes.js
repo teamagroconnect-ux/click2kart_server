@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import Admin from "../models/Admin.js";
 import Customer from "../models/Customer.js";
 import OTP from "../models/OTP.js";
-import { sendOTP } from "../lib/mailer.js";
+import { sendOTP, sendEmail } from "../lib/mailer.js";
 
 const router = express.Router();
 
@@ -76,6 +76,27 @@ router.post("/customer/verify-otp", async (req, res) => {
   });
 
   await OTP.deleteOne({ _id: record._id });
+
+  try {
+    const to = process.env.MAIL_TO || process.env.ADMIN_EMAIL || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    if (to) {
+      await sendEmail({
+        to,
+        subject: `New customer application - ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        html: `
+          <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color:#111827;margin:0 0 12px;font-weight:800">New Customer Verified OTP</h2>
+            <p style="color:#374151;line-height:1.6">A new user has completed verification and is awaiting approval.</p>
+            <ul style="color:#111827;line-height:1.8;padding-left:18px">
+              <li><b>Name:</b> ${customer.name}</li>
+              <li><b>Email:</b> ${customer.email || "-"}</li>
+              <li><b>Phone:</b> ${customer.phone}</li>
+            </ul>
+          </div>
+        `
+      });
+    }
+  } catch {}
 
   res.json({ message: "application_submitted" });
 });
