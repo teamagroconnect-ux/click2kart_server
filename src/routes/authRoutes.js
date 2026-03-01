@@ -50,7 +50,7 @@ router.post("/customer/signup", async (req, res) => {
   );
 
   try {
-    await sendOTP(email, otp);
+    await sendOTP(email, otp, "ACCOUNT_VERIFICATION");
     res.json({ message: "otp_sent" });
   } catch (err) {
     res.status(500).json({ error: "failed_to_send_email" });
@@ -142,7 +142,7 @@ router.post("/customer/forgot-password", async (req, res) => {
   );
 
   try {
-    await sendOTP(email, otp);
+    await sendOTP(email, otp, "FORGOT_PASSWORD");
     res.json({ message: "otp_sent" });
   } catch (err) {
     res.status(500).json({ error: "failed_to_send_email" });

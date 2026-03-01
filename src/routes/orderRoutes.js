@@ -154,6 +154,13 @@ router.get("/my-orders", async (req, res) => {
   res.json(items);
 });
 
+router.get("/my", auth, requireRole("customer"), async (req, res) => {
+  const cust = await Customer.findById(req.user.id).select("phone email");
+  if (!cust) return res.status(404).json({ error: "not_found" });
+  const items = await Order.find({ "customer.phone": cust.phone }).sort({ createdAt: -1 });
+  res.json(items);
+});
+
 router.get("/", auth, requireRole("admin"), async (req, res) => {
   const status = req.query.status;
   const page = Math.max(1, parseInt(req.query.page) || 1);

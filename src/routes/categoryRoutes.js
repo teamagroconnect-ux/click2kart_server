@@ -10,7 +10,13 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
   if (!name) return res.status(400).json({ error: "missing_name" });
   const exists = await Category.findOne({ name });
   if (exists) return res.status(409).json({ error: "duplicate_name" });
-  const doc = await Category.create({ name, description: req.body?.description || "" });
+  let parent = null;
+  if (req.body?.parentId) {
+    if (!mongoose.isValidObjectId(req.body.parentId)) return res.status(400).json({ error: "invalid_parent" });
+    parent = await Category.findById(req.body.parentId);
+    if (!parent) return res.status(404).json({ error: "parent_not_found" });
+  }
+  const doc = await Category.create({ name, description: req.body?.description || "", parent: parent?._id || null });
   res.status(201).json(doc);
 });
 
@@ -19,7 +25,7 @@ router.get("/", auth, requireRole("admin"), async (req, res) => {
   const filter = {};
   if (active === "true") filter.isActive = true;
   if (active === "false") filter.isActive = false;
-  const items = await Category.find(filter).sort({ name: 1 });
+  const items = await Category.find(filter).populate("parent", "name").sort({ name: 1 });
   res.json(items);
 });
 
@@ -28,6 +34,15 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   const payload = {};
   if (typeof req.body?.name === "string" && req.body.name.trim()) payload.name = req.body.name.trim().toLowerCase();
   if (typeof req.body?.description === "string") payload.description = req.body.description;
+  if (req.body?.parentId !== undefined) {
+    if (req.body.parentId === null || req.body.parentId === "") payload.parent = null;
+    else {
+      if (!mongoose.isValidObjectId(req.body.parentId)) return res.status(400).json({ error: "invalid_parent" });
+      const parent = await Category.findById(req.body.parentId);
+      if (!parent) return res.status(404).json({ error: "parent_not_found" });
+      payload.parent = parent._id;
+    }
+  }
   if (typeof req.body?.isActive === "boolean") payload.isActive = req.body.isActive;
   if (payload.name) {
     const dup = await Category.findOne({ name: payload.name, _id: { $ne: req.params.id } });
@@ -46,4 +61,3 @@ router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
 });
 
 export default router;
-

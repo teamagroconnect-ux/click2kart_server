@@ -11,6 +11,7 @@ const productSchema = new mongoose.Schema(
     description: { type: String, default: "" },
     price: { type: Number, required: true, min: 0 },
     category: { type: String, index: true },
+    subcategory: { type: String, index: true },
     images: { type: [imageSchema], default: [] },
     stock: { type: Number, required: true, min: 0 },
     gst: { type: Number, default: 0, min: 0 },
@@ -25,7 +26,7 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-productSchema.index({ name: "text", description: "text", category: "text" }, { weights: { name: 10, category: 5, description: 2 } });
+productSchema.index({ name: "text", description: "text", category: "text", subcategory: "text" }, { weights: { name: 10, category: 5, subcategory: 4, description: 2 } });
 productSchema.index({ isActive: 1, category: 1, createdAt: -1 });
 productSchema.index({ isActive: 1, stock: 1 });
 

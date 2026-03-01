@@ -47,6 +47,7 @@ router.get("/", async (req, res) => {
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
   const query = { isActive: true };
   if (req.query.category) query.category = req.query.category.toString().toLowerCase();
+  if (req.query.subcategory) query.subcategory = req.query.subcategory.toString().toLowerCase();
   const q = req.query.q ? String(req.query.q).trim() : "";
   if (q && q.length < 2) query.name = { $regex: q, $options: "i" };
   const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -79,7 +80,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp } = req.body || {};
+  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -87,6 +88,13 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     const cat = await Category.findOne({ name: catName, isActive: true });
     if (!cat) return res.status(400).json({ error: "category_not_found" });
     categoryValue = catName;
+  }
+  let subcategoryValue = undefined;
+  if (subcategory) {
+    const subName = String(subcategory).trim().toLowerCase();
+    const sub = await Category.findOne({ name: subName, isActive: true });
+    if (!sub) return res.status(400).json({ error: "subcategory_not_found" });
+    subcategoryValue = subName;
   }
   const imgArr = Array.isArray(images)
     ? images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url)
@@ -96,6 +104,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     description: description || "",
     price: Number(price),
     category: categoryValue,
+    subcategory: subcategoryValue,
     images: imgArr,
     stock: Number(stock),
     gst: gst == null ? 0 : Number(gst),
@@ -108,7 +117,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "price", "category", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction"];
+  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.category != null) {
@@ -118,6 +127,15 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
       const cat = await Category.findOne({ name: catName, isActive: true });
       if (!cat) return res.status(400).json({ error: "category_not_found" });
       payload.category = catName;
+    }
+  }
+  if (payload.subcategory != null) {
+    if (payload.subcategory === "") payload.subcategory = undefined;
+    else {
+      const subName = String(payload.subcategory).trim().toLowerCase();
+      const sub = await Category.findOne({ name: subName, isActive: true });
+      if (!sub) return res.status(400).json({ error: "subcategory_not_found" });
+      payload.subcategory = subName;
     }
   }
   if (Array.isArray(payload.images)) payload.images = payload.images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url);

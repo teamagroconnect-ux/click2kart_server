@@ -8,15 +8,16 @@ import { sendEmail } from "../lib/mailer.js";
 const router = express.Router();
 
 router.get("/stats", auth, requireRole("admin"), async (req, res) => {
-  const [totalProducts, totalCustomers, totalBills, lowStock] = await Promise.all([
+  const [totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock] = await Promise.all([
     Product.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: true }),
+    Customer.countDocuments({ isActive: false }),
     Bill.countDocuments({}),
     Product.find({ isActive: true, stock: { $lte: Number(process.env.LOW_STOCK_THRESHOLD ?? 5) } })
       .sort({ stock: 1 })
       .limit(10)
   ]);
-  res.json({ totalProducts, totalCustomers, totalBills, lowStock });
+  res.json({ totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock });
 });
 
 router.get("/settings", auth, requireRole("admin"), (req, res) => {
