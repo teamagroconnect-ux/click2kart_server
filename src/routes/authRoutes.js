@@ -120,7 +120,7 @@ router.post("/customer/login", async (req, res) => {
 
   res.json({
     token,
-    user: { id: user._id.toString(), name: user.name, email: user.email, role: "customer" }
+    user: { id: user._id.toString(), name: user.name, email: user.email, role: "customer", isKycComplete: !!user.isKycComplete }
   });
 });
 
