@@ -24,6 +24,7 @@ import webhookRoutes from "./routes/webhookRoutes.js";
 import shippingRoutes from "./routes/shippingRoutes.js";
 import sitemapRoutes from "./routes/sitemapRoutes.js";
 import recommendationRoutes from "./routes/recommendationRoutes.js";
+import inventoryRoutes from "./routes/inventoryRoutes.js";
 
 dotenv.config();
 
@@ -55,6 +56,7 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api/shipping", shippingRoutes);
 app.use("/", sitemapRoutes);
 app.use("/api/recommendations", recommendationRoutes);
+app.use("/api/inventory", inventoryRoutes);
 
 const PORT = process.env.PORT || 5000;
 
