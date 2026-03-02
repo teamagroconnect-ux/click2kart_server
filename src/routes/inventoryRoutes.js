@@ -37,11 +37,13 @@ router.get("/history", auth, requireRole("admin"), async (req, res) => {
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
-    .populate("product", "name");
+    .populate("product", "name store section");
   const out = items.map((x) => ({
     id: x._id.toString(),
     productId: x.product?._id?.toString?.() || "",
     productName: x.product?.name || "",
+    store: x.product?.store || "",
+    section: x.product?.section || "",
     quantity: x.quantity,
     note: x.note || "",
     before: x.before,

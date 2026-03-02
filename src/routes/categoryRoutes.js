@@ -19,6 +19,8 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
   const doc = await Category.create({
     name,
     description: req.body?.description || "",
+    store: req.body?.store || "",
+    section: req.body?.section || "",
     image: req.body?.image || "",
     parent: parent?._id || null
   });
@@ -40,6 +42,8 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   // Do not allow changing name via API to preserve URL structure and consistency
   if (typeof req.body?.description === "string") payload.description = req.body.description;
   if (typeof req.body?.image === "string") payload.image = req.body.image;
+  if (typeof req.body?.store === "string") payload.store = req.body.store;
+  if (typeof req.body?.section === "string") payload.section = req.body.section;
   if (req.body?.parentId !== undefined) {
     if (req.body.parentId === null || req.body.parentId === "") payload.parent = null;
     else {

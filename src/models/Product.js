@@ -19,6 +19,8 @@ const productSchema = new mongoose.Schema(
     mrp: { type: Number, min: 0 },
     brand: { type: String, index: true },
     minOrderQty: { type: Number, default: 1, min: 0 },
+    store: { type: String, default: "" },
+    section: { type: String, default: "" },
     bulkDiscountQuantity: { type: Number, default: 0, min: 0 },
     bulkDiscountPriceReduction: { type: Number, default: 0, min: 0 },
     bulkTiers: {
