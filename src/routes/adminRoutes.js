@@ -92,4 +92,30 @@ router.post("/customers/:id/approve", auth, requireRole("admin"), async (req, re
   res.json({ approved: true, customer: updated });
 });
 
+// Top buyers analytics
+router.get("/analytics/top-buyers", auth, requireRole("admin"), async (req, res) => {
+  const Order = (await import("../models/Order.js")).default;
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 10));
+  const agg = await Order.aggregate([
+    {
+      $group: {
+        _id: "$customer.phone",
+        name: { $last: "$customer.name" },
+        email: { $last: "$customer.email" },
+        totalSpent: { $sum: "$totalEstimate" },
+        orderCount: { $sum: 1 }
+      }
+    },
+    { $sort: { totalSpent: -1 } },
+    { $limit: limit }
+  ]);
+  res.json(agg.map(x => ({
+    phone: x._id,
+    name: x.name || "",
+    email: x.email || "",
+    totalSpent: x.totalSpent || 0,
+    orderCount: x.orderCount || 0
+  })));
+});
+
 export default router;

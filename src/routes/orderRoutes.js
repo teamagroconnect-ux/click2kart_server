@@ -28,22 +28,33 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   // Check stock before proceeding
   for (const it of items) {
     const p = products.find(x => x._id.toString() === it.productId);
-    if (!p || p.stock < it.quantity) {
-      return res.status(400).json({ error: `Insufficient stock for ${p?.name || 'unknown product'}` });
+    if (!p) return res.status(400).json({ error: "product_not_found" });
+    if (p.minOrderQty && Number(p.minOrderQty) > 0 && it.quantity < Number(p.minOrderQty)) {
+      return res.status(400).json({ error: `MOQ_not_met:${p.minOrderQty}` });
+    }
+    if (it.variantId) {
+      const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+      if (!v || (v.stock || 0) < it.quantity) {
+        return res.status(400).json({ error: `Insufficient stock for ${p.name}` });
+      }
+    } else if (p.stock < it.quantity) {
+      return res.status(400).json({ error: `Insufficient stock for ${p.name}` });
     }
   }
 
   const totals = computeTotals(products, items);
   const orderItems = totals.items.map((it) => {
     const p = products.find(x => x._id.toString() === it.product.toString());
+    const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
     return {
       product: it.product,
+      variantId: it.variantId,
       name: it.name,
       price: it.price,
       gst: it.gst,
       quantity: it.quantity,
       lineTotal: it.lineTotal,
-      image: p?.images?.[0]?.url || ""
+      image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "")
     };
   });
 

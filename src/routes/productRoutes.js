@@ -89,10 +89,20 @@ router.get("/:id", async (req, res) => {
 // Similar products by category
 router.get("/:id/recommendations", async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const base = await Product.findById(req.params.id).select({ category: 1 });
+  const base = await Product.findById(req.params.id).select({ category: 1, brand: 1, price: 1 });
   if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
-  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 8));
-  const items = await Product.find({ isActive: true, category: base.category, _id: { $ne: base._id } })
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 6));
+  const priceRange = {
+    $gte: Math.max(0, Number(base.price || 0) * 0.8),
+    $lte: Number(base.price || 0) * 1.2
+  };
+  const items = await Product.find({
+      isActive: true,
+      category: base.category,
+      ...(base.brand ? { brand: base.brand } : {}),
+      ...(base.price != null ? { price: priceRange } : {}),
+      _id: { $ne: base._id }
+    })
     .sort({ stock: -1, createdAt: -1 })
     .limit(limit);
   const canViewPrice = isViewerAuthorized(req);
@@ -100,7 +110,7 @@ router.get("/:id/recommendations", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants } = req.body || {};
+  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -123,12 +133,14 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     name: String(name).trim(),
     description: description || "",
     price: Number(price),
+    brand: brand ? String(brand).trim() : undefined,
     category: categoryValue,
     subcategory: subcategoryValue,
     images: imgArr,
     stock: Number(stock),
     gst: gst == null ? 0 : Number(gst),
     mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
+    minOrderQty: Number(minOrderQty || 0),
     bulkDiscountQuantity: Number(bulkDiscountQuantity || 0),
     bulkDiscountPriceReduction: Number(bulkDiscountPriceReduction || 0),
     bulkTiers: Array.isArray(bulkTiers)
@@ -158,7 +170,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants"];
+  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.category != null) {

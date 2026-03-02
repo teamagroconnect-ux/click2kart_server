@@ -8,7 +8,7 @@ const router = express.Router();
 
 const serializeCart = async (cart) => {
   if (!cart) return { items: [] };
-  await cart.populate("items.product", "name price images stock variants");
+  await cart.populate("items.product", "name price images stock variants minOrderQty");
   return {
     items: cart.items.map((it) => {
       const base = {
@@ -26,7 +26,8 @@ const serializeCart = async (cart) => {
             price: v.price ?? it.product.price,
             stock: v.stock ?? 0,
             sku: v.sku,
-            image: (v.images?.[0]?.url || it.product.images?.[0]?.url || "")
+            image: (v.images?.[0]?.url || it.product.images?.[0]?.url || ""),
+            minOrderQty: it.product.minOrderQty || 0
           };
         }
       }
@@ -35,7 +36,8 @@ const serializeCart = async (cart) => {
         name: it.product.name,
         price: it.product.price,
         stock: it.product.stock,
-        image: it.product.images?.[0]?.url || ""
+        image: it.product.images?.[0]?.url || "",
+        minOrderQty: it.product.minOrderQty || 0
       };
     })
   };
