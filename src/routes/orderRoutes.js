@@ -252,4 +252,46 @@ router.post("/:id/feedback", auth, requireRole("customer"), async (req, res) => 
   res.json({ success: true, feedbackRating: r });
 });
 
+// Admin: mark as packed
+router.patch("/:id/pack", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  if (order.status === "CANCELLED") return res.status(400).json({ error: "cancelled_order" });
+  order.shipping = order.shipping || {};
+  order.shipping.status = "PACKED";
+  await order.save();
+  res.json({ success: true, order });
+});
+
+// Admin: create/update shipment (manual)
+router.patch("/:id/ship", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { provider, waybill, trackingUrl } = req.body || {};
+  if (!provider || !waybill) return res.status(400).json({ error: "missing_fields" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  if (order.status === "CANCELLED") return res.status(400).json({ error: "cancelled_order" });
+  order.shipping = order.shipping || {};
+  order.shipping.provider = String(provider);
+  order.shipping.waybill = String(waybill);
+  order.shipping.trackingUrl = trackingUrl || order.shipping.trackingUrl || "";
+  order.shipping.status = "SHIPPED";
+  await order.save();
+  res.json({ success: true, order });
+});
+
+// Admin: mark delivered and close
+router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  if (order.status === "CANCELLED") return res.status(400).json({ error: "cancelled_order" });
+  order.shipping = order.shipping || {};
+  order.shipping.status = "DELIVERED";
+  order.status = "FULFILLED";
+  await order.save();
+  res.json({ success: true, order });
+});
+
 export default router;

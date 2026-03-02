@@ -16,7 +16,12 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     parent = await Category.findById(req.body.parentId);
     if (!parent) return res.status(404).json({ error: "parent_not_found" });
   }
-  const doc = await Category.create({ name, description: req.body?.description || "", parent: parent?._id || null });
+  const doc = await Category.create({
+    name,
+    description: req.body?.description || "",
+    image: req.body?.image || "",
+    parent: parent?._id || null
+  });
   res.status(201).json(doc);
 });
 
@@ -32,8 +37,9 @@ router.get("/", auth, requireRole("admin"), async (req, res) => {
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const payload = {};
-  if (typeof req.body?.name === "string" && req.body.name.trim()) payload.name = req.body.name.trim().toLowerCase();
+  // Do not allow changing name via API to preserve URL structure and consistency
   if (typeof req.body?.description === "string") payload.description = req.body.description;
+  if (typeof req.body?.image === "string") payload.image = req.body.image;
   if (req.body?.parentId !== undefined) {
     if (req.body.parentId === null || req.body.parentId === "") payload.parent = null;
     else {
@@ -44,10 +50,6 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
     }
   }
   if (typeof req.body?.isActive === "boolean") payload.isActive = req.body.isActive;
-  if (payload.name) {
-    const dup = await Category.findOne({ name: payload.name, _id: { $ne: req.params.id } });
-    if (dup) return res.status(409).json({ error: "duplicate_name" });
-  }
   const updated = await Category.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
