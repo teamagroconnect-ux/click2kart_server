@@ -66,6 +66,9 @@ router.post("/add", async (req, res) => {
     if (!variant || !variant.isActive) return res.status(404).json({ error: "variant_not_found" });
   }
 
+  const minQty = Math.max(1, Number(product.minOrderQty || 0));
+  const effQty = Math.max(qty, minQty);
+
   let cart = await Cart.findOne({ customer: req.user.id });
   if (!cart) {
     cart = await Cart.create({ customer: req.user.id, items: [] });
@@ -74,12 +77,12 @@ router.post("/add", async (req, res) => {
   const existing = cart.items.find((it) => it.product.toString() === productId && String(it.variantId || "") === String(variantId || ""));
   const currentQty = existing ? existing.quantity : 0;
   const available = variant ? (variant.stock || 0) : product.stock;
-  if (currentQty + qty > available) return res.status(400).json({ error: "insufficient_stock" });
+  if (currentQty + effQty > available) return res.status(400).json({ error: "insufficient_stock" });
 
   if (existing) {
-    existing.quantity += qty;
+    existing.quantity += effQty;
   } else {
-    cart.items.push({ product: product._id, variantId: variantId || undefined, quantity: qty });
+    cart.items.push({ product: product._id, variantId: variantId || undefined, quantity: effQty });
   }
   await cart.save();
 
@@ -107,8 +110,10 @@ router.put("/update", async (req, res) => {
     if (!product) return res.status(404).json({ error: "product_not_found" });
     const variant = variantId ? (product.variants || []).find(v => v._id.toString() === String(variantId)) : null;
     const available = variant ? (variant.stock || 0) : product.stock;
-    if (qty > available) return res.status(400).json({ error: "insufficient_stock" });
-    cart.items[idx].quantity = qty;
+    const minQty = Math.max(1, Number(product.minOrderQty || 0));
+    const effQty = Math.max(minQty, qty);
+    if (effQty > available) return res.status(400).json({ error: "insufficient_stock" });
+    cart.items[idx].quantity = effQty;
   }
   await cart.save();
   res.json(await serializeCart(cart));
