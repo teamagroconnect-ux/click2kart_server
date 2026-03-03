@@ -34,7 +34,7 @@ const orderSchema = new mongoose.Schema(
     codDueAmount: { type: Number, default: 0 },
     status: { 
       type: String, 
-      enum: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED", "CANCELLED", "FULFILLED"], 
+      enum: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"], 
       default: "NEW" 
     },
     notes: { type: String, default: "" },
@@ -55,5 +55,8 @@ const orderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+orderSchema.index({ status: 1 });
+orderSchema.index({ createdAt: -1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

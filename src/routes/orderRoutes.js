@@ -8,6 +8,8 @@ import { computeTotals } from "../lib/invoice.js";
 import razorpay from "../lib/razorpay.js";
 import crypto from "crypto";
 import { createBillFromData } from "../lib/billing.js";
+import { sendEmail } from "../lib/mailer.js";
+import AuditLog from "../models/AuditLog.js";
 import { notifyAdmin } from "../lib/socket.js";
 
 const router = express.Router();
@@ -94,6 +96,11 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     notifyAdmin("new_offline_order", doc);
   }
 
+  try {
+    const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    if (to) await sendEmail({ to, subject: `Order placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Order Received</h3><p>Order ID: ${doc._id}</p><p>Total: ₹${totals.total}</p></div>` });
+  } catch {}
+
   res.status(201).json({
     order: doc,
     razorpayOrderId: razorpayOrder?.id
@@ -113,6 +120,39 @@ router.post("/verify-payment", async (req, res) => {
   if (expectedSignature === razorpay_signature) {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ error: "order_not_found" });
+
+    // Re-validate stock and totals before marking paid
+    try {
+      const ids = order.items.map(i => i.product.toString());
+      const products = await Product.find({ _id: { $in: ids }, isActive: true });
+      // Stock check
+      for (const it of order.items) {
+        const p = products.find(x => x._id.toString() === it.product.toString());
+        if (!p) return res.status(400).json({ error: "product_not_found" });
+        const qty = Number(it.quantity || 0);
+        if (it.variantId) {
+          const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+          if (!v || (v.stock || 0) < qty) return res.status(400).json({ error: "stock_changed" });
+        } else if ((p.stock || 0) < qty) {
+          return res.status(400).json({ error: "stock_changed" });
+        }
+      }
+      // Totals check with possible new bulk pricing
+      const recomputeItems = order.items.map(it => ({
+        productId: it.product.toString(),
+        variantId: it.variantId ? it.variantId.toString() : undefined,
+        quantity: it.quantity
+      }));
+      const totals = computeTotals(products, recomputeItems);
+      const expected = Math.round((order.paymentMethod === "COD_20" ? totals.total * 0.2 : totals.total) * 100);
+      // If amount drifted vs originally computed amount stored on order
+      const orderAmountPaise = Math.round((order.paymentMethod === "COD_20" ? order.totalEstimate * 0.2 : order.totalEstimate) * 100);
+      if (expected !== orderAmountPaise) {
+        return res.status(400).json({ error: "amount_mismatch" });
+      }
+    } catch (e) {
+      return res.status(400).json({ error: "revalidation_failed" });
+    }
 
     if (order.paymentMethod === "COD_20") {
       order.paymentStatus = "PARTIAL";
@@ -139,6 +179,11 @@ router.post("/verify-payment", async (req, res) => {
         console.error("Auto-billing failed after payment:", err);
       }
     }
+    try {
+      await AuditLog.create({ actorId: "", actorRole: "system", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Payment verified (${order.paymentMethod})` });
+      const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+      if (to) await sendEmail({ to, subject: `Payment confirmed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Payment Confirmed</h3><p>Order ID: ${order._id}</p></div>` });
+    } catch {}
     
     res.json({ success: true, message: "payment_verified" });
   } else {
@@ -230,9 +275,27 @@ router.get("/:id", auth, requireRole("admin"), async (req, res) => {
 router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const { status } = req.body || {};
-  const allowed = new Set(["NEW", "CONFIRMED", "CANCELLED", "FULFILLED"]);
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  const allowed = new Set(["NEW", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"]);
   if (!allowed.has(status)) return res.status(400).json({ error: "invalid_status" });
-  const updated = await Order.findByIdAndUpdate(req.params.id, { status }, { new: true });
+  const okTransitions = {
+    NEW: new Set(["CONFIRMED", "CANCELLED"]),
+    PENDING_CASH_APPROVAL: new Set(["CONFIRMED", "CANCELLED"]),
+    CONFIRMED: new Set(["SHIPPED", "CANCELLED"]),
+    SHIPPED: new Set(["DELIVERED", "RETURNED"]),
+    DELIVERED: new Set(["FULFILLED", "RETURNED"]),
+    CANCELLED: new Set([]),
+    RETURNED: new Set([]),
+    FULFILLED: new Set([])
+  };
+  const curr = order.status;
+  if (!okTransitions[curr] || !okTransitions[curr].has(status)) return res.status(400).json({ error: "invalid_transition" });
+  order.status = status;
+  const updated = await order.save();
+  try {
+    await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: updated._id.toString(), note: `Status ${curr} → ${status}` });
+  } catch {}
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
 });
@@ -277,7 +340,15 @@ router.patch("/:id/ship", auth, requireRole("admin"), async (req, res) => {
   order.shipping.waybill = String(waybill);
   order.shipping.trackingUrl = trackingUrl || order.shipping.trackingUrl || "";
   order.shipping.status = "SHIPPED";
+  const prev = order.status;
+  if (prev !== "CONFIRMED" && prev !== "SHIPPED") return res.status(400).json({ error: "invalid_transition" });
+  order.status = "SHIPPED";
   await order.save();
+  try {
+    await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${prev} → SHIPPED` });
+    const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    if (to) await sendEmail({ to, subject: `Order shipped - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Shipped</h3><p>Order ID: ${order._id}</p><p>${order.shipping.provider} • ${order.shipping.waybill}</p></div>` });
+  } catch {}
   res.json({ success: true, order });
 });
 
@@ -289,8 +360,15 @@ router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
   if (order.status === "CANCELLED") return res.status(400).json({ error: "cancelled_order" });
   order.shipping = order.shipping || {};
   order.shipping.status = "DELIVERED";
-  order.status = "FULFILLED";
+  const prev2 = order.status;
+  if (prev2 !== "SHIPPED") return res.status(400).json({ error: "invalid_transition" });
+  order.status = "DELIVERED";
   await order.save();
+  try {
+    await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${prev2} → DELIVERED` });
+    const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    if (to) await sendEmail({ to, subject: `Order delivered - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Delivered</h3><p>Order ID: ${order._id}</p></div>` });
+  } catch {}
   res.json({ success: true, order });
 });
 

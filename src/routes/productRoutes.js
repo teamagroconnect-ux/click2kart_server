@@ -1,6 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Product from "../models/Product.js";
+import AuditLog from "../models/AuditLog.js";
 import Category from "../models/Category.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import StockTxn from "../models/StockTxn.js";
@@ -9,6 +10,11 @@ import Review from "../models/Review.js";
 import jwt from "jsonwebtoken";
 
 const router = express.Router();
+
+// 30s in-memory cache for recommend endpoint
+const _recCache = new Map(); // key -> { expire:number, data:any }
+const _now = () => Date.now();
+const _mkKey = (id, cart) => `${id}|${(cart||[]).join(",")}`;
 
 const isViewerAuthorized = (req) => {
   try {
@@ -111,6 +117,45 @@ router.get("/:id/recommendations", async (req, res) => {
   res.json(items.map((it) => sanitizeProduct(it, canViewPrice)));
 });
 
+  // Single recommendation for add-to-cart modal
+router.get("/recommend", async (req, res) => {
+  const id = String(req.query.productId || "").trim();
+  if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "invalid_id" });
+  const base = await Product.findById(id).select({ category: 1, brand: 1, price: 1, isActive: 1 });
+  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  const priceRange = {
+    $gte: Math.max(0, Number(base.price || 0) * 0.8),
+    $lte: Number(base.price || 0) * 1.2
+  };
+  const excludeIds = String(req.query.cart || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean)
+    .filter(x => mongoose.isValidObjectId(x));
+  const key = _mkKey(id, excludeIds);
+  const cached = _recCache.get(key);
+  if (cached && cached.expire > _now()) {
+    const canViewPrice = isViewerAuthorized(req);
+    return res.json({ items: (cached.data || []).map((it) => sanitizeProduct(it, canViewPrice)) });
+  }
+  const filter = {
+    isActive: true,
+    category: base.category,
+    ...(base.brand ? { brand: base.brand } : {}),
+    ...(base.price != null ? { price: priceRange } : {}),
+    _id: excludeIds.length ? { $ne: base._id, $nin: excludeIds } : { $ne: base._id }
+  };
+  const candidates = await Product.find(filter).sort({ stock: -1, createdAt: -1 }).limit(20).lean();
+  const withMargin = candidates.map(c => {
+    const margin = (c.margin != null) ? Number(c.margin) : ((c.mrp && c.mrp > c.price) ? (c.mrp - c.price) : 0);
+    return { doc: c, margin };
+  }).sort((a, b) => (b.margin - a.margin));
+  const pick = withMargin.length ? [withMargin[0].doc] : [];
+  _recCache.set(key, { expire: _now() + 30_000, data: pick });
+  const canViewPrice = isViewerAuthorized(req);
+  res.json({ items: pick.map((it) => sanitizeProduct(it, canViewPrice)) });
+});
+
 router.post("/", auth, requireRole("admin"), async (req, res) => {
   const { name, price, category, subcategory, images, stock, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty, store, section } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
@@ -187,6 +232,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   const allowed = ["name", "description", "highlights", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
+  const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1 });
   if (payload.category != null) {
     if (payload.category === "") payload.category = undefined;
     else {
@@ -236,6 +282,27 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   }
   const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
+  try {
+    const changes = {};
+    if (beforeDoc) {
+      if (payload.price != null && Number(beforeDoc.price) !== Number(payload.price)) changes.price = { before: beforeDoc.price, after: payload.price };
+      if (payload.gst != null && Number(beforeDoc.gst) !== Number(payload.gst)) changes.gst = { before: beforeDoc.gst, after: payload.gst };
+      if (payload.minOrderQty != null && Number(beforeDoc.minOrderQty) !== Number(payload.minOrderQty)) changes.minOrderQty = { before: beforeDoc.minOrderQty, after: payload.minOrderQty };
+      if (Array.isArray(payload.bulkTiers)) changes.bulkTiers = { before: beforeDoc.bulkTiers, after: payload.bulkTiers };
+    }
+    if (Object.keys(changes).length) {
+      await AuditLog.create({
+        actorId: req.user?.id || "",
+        actorRole: req.user?.role || "",
+        type: "PRODUCT_UPDATE",
+        entityType: "PRODUCT",
+        entityId: updated._id.toString(),
+        before: changes,
+        after: null,
+        note: "Product updated"
+      });
+    }
+  } catch {}
   res.json(updated);
 });
 

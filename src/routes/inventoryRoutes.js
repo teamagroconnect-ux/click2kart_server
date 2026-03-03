@@ -2,7 +2,9 @@ import express from "express";
 import mongoose from "mongoose";
 import { auth, requireRole } from "../middleware/auth.js";
 import Product from "../models/Product.js";
+import Order from "../models/Order.js";
 import StockTxn from "../models/StockTxn.js";
+import AuditLog from "../models/AuditLog.js";
 
 const router = express.Router();
 
@@ -26,6 +28,18 @@ router.post("/in", auth, requireRole("admin"), async (req, res) => {
     refType: "MANUAL",
     note: note || ""
   });
+  try {
+    await AuditLog.create({
+      actorId: req.user?.id || "",
+      actorRole: req.user?.role || "",
+      type: "STOCK",
+      entityType: "PRODUCT",
+      entityId: doc._id.toString(),
+      note: `Stock IN +${qty} ${note || ""}`,
+      before: { stock: before },
+      after: { stock: doc.stock }
+    });
+  } catch {}
   res.status(201).json({ productId: doc._id.toString(), before, added: qty, after: doc.stock });
 });
 
@@ -97,3 +111,20 @@ router.get("/summary", auth, requireRole("admin"), async (req, res) => {
 });
 
 export default router;
+
+// Overview: total, reserved, available per product
+router.get("/overview", auth, requireRole("admin"), async (req, res) => {
+  const reservedAgg = await Order.aggregate([
+    { $match: { status: { $in: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED"] } } },
+    { $unwind: "$items" },
+    { $group: { _id: "$items.product", reserved: { $sum: "$items.quantity" } } }
+  ]);
+  const reservedMap = new Map(reservedAgg.map(x => [String(x._id), x.reserved || 0]));
+  const prods = await Product.find({ isActive: true }).select("name stock");
+  const items = prods.map(p => {
+    const reserved = reservedMap.get(p._id.toString()) || 0;
+    const available = Math.max(0, (p.stock || 0) - reserved);
+    return { id: p._id.toString(), name: p.name, total: p.stock || 0, reserved, available, low: available < 10 };
+  }).sort((a, b) => a.available - b.available);
+  res.json({ items });
+});

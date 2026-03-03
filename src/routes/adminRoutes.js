@@ -119,3 +119,38 @@ router.get("/analytics/top-buyers", auth, requireRole("admin"), async (req, res)
 });
 
 export default router;
+
+// Revenue summary: totals and leaders
+router.get("/revenue/summary", auth, requireRole("admin"), async (req, res) => {
+  const Order = (await import("../models/Order.js")).default;
+  const paidStatuses = ["PAID", "PARTIAL"];
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const totalAgg = await Order.aggregate([
+    { $match: { paymentStatus: { $in: paidStatuses } } },
+    { $group: { _id: null, sum: { $sum: "$totalEstimate" } } }
+  ]);
+  const monthAgg = await Order.aggregate([
+    { $match: { paymentStatus: { $in: paidStatuses }, createdAt: { $gte: startOfMonth } } },
+    { $group: { _id: null, sum: { $sum: "$totalEstimate" } } }
+  ]);
+  const pendingOrders = await Order.countDocuments({ status: { $in: ["NEW", "PENDING_CASH_APPROVAL"] } });
+  const topProducts = await Order.aggregate([
+    { $unwind: "$items" },
+    { $group: { _id: "$items.name", revenue: { $sum: "$items.lineTotal" }, qty: { $sum: "$items.quantity" } } },
+    { $sort: { revenue: -1 } },
+    { $limit: 5 }
+  ]);
+  const topBuyers = await Order.aggregate([
+    { $group: { _id: "$customer.phone", name: { $last: "$customer.name" }, total: { $sum: "$totalEstimate" } } },
+    { $sort: { total: -1 } },
+    { $limit: 5 }
+  ]);
+  res.json({
+    totalRevenue: totalAgg[0]?.sum || 0,
+    thisMonthRevenue: monthAgg[0]?.sum || 0,
+    pendingOrders,
+    topProducts: topProducts.map(x => ({ name: x._id, revenue: x.revenue, quantity: x.qty })),
+    topBuyers: topBuyers.map(x => ({ phone: x._id, name: x.name, total: x.total }))
+  });
+});
