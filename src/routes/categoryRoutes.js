@@ -16,14 +16,14 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     parent = await Category.findById(req.body.parentId);
     if (!parent) return res.status(404).json({ error: "parent_not_found" });
   }
-  const doc = await Category.create({
+  const payload = {
     name,
-    description: req.body?.description || "",
     store: req.body?.store || "",
     section: req.body?.section || "",
     image: req.body?.image || "",
     parent: parent?._id || null
-  });
+  };
+  const doc = await Category.create(payload);
   res.status(201).json(doc);
 });
 
@@ -40,7 +40,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const payload = {};
   // Do not allow changing name via API to preserve URL structure and consistency
-  if (typeof req.body?.description === "string") payload.description = req.body.description;
+  // description removed by product requirements
   if (typeof req.body?.image === "string") payload.image = req.body.image;
   if (typeof req.body?.store === "string") payload.store = req.body.store;
   if (typeof req.body?.section === "string") payload.section = req.body.section;
