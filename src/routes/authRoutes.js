@@ -168,4 +168,45 @@ router.post("/customer/reset-password", async (req, res) => {
   res.json({ message: "password_reset_success" });
 });
 
+// CUSTOMER LOGIN VIA OTP - Step 1: Send OTP
+router.post("/customer/login-otp/send", async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: "missing_email" });
+  const user = await Customer.findOne({ email: String(email).toLowerCase().trim(), isActive: true });
+  if (!user) return res.status(404).json({ error: "user_not_found" });
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await OTP.findOneAndUpdate(
+    { email: user.email, purpose: "LOGIN" },
+    { otp, expiresAt },
+    { upsert: true }
+  );
+  try {
+    await sendOTP(user.email, otp, "LOGIN");
+    res.json({ message: "otp_sent" });
+  } catch {
+    res.status(500).json({ error: "failed_to_send_email" });
+  }
+});
+
+// CUSTOMER LOGIN VIA OTP - Step 2: Verify
+router.post("/customer/login-otp/verify", async (req, res) => {
+  const { email, otp } = req.body || {};
+  if (!email || !otp) return res.status(400).json({ error: "missing_fields" });
+  const record = await OTP.findOne({ email: String(email).toLowerCase().trim(), otp, purpose: "LOGIN" });
+  if (!record) return res.status(400).json({ error: "invalid_otp" });
+  const user = await Customer.findOne({ email: String(email).toLowerCase().trim(), isActive: true });
+  if (!user) return res.status(404).json({ error: "user_not_found" });
+  await OTP.deleteOne({ _id: record._id });
+  const token = jwt.sign(
+    { id: user._id.toString(), role: "customer", email: user.email },
+    process.env.JWT_SECRET,
+    { expiresIn: "60m" }
+  );
+  res.json({
+    token,
+    user: { id: user._id.toString(), name: user.name, email: user.email, role: "customer", isKycComplete: !!user.isKycComplete }
+  });
+});
+
 export default router;

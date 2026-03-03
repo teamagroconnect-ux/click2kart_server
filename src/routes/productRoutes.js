@@ -55,6 +55,8 @@ router.get("/", async (req, res) => {
   const query = { isActive: true };
   if (req.query.category) query.category = req.query.category.toString().toLowerCase();
   if (req.query.subcategory) query.subcategory = req.query.subcategory.toString().toLowerCase();
+  if (req.query.store) query.store = req.query.store.toString().trim();
+  if (req.query.section) query.section = req.query.section.toString().trim();
   const q = req.query.q ? String(req.query.q).trim() : "";
   if (q && q.length < 2) query.name = { $regex: q, $options: "i" };
   const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -167,6 +169,15 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
       images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
     })) : []
   });
+  try {
+    if ((doc.variants || []).length > 0) {
+      const sum = (doc.variants || []).filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
+      if (Number.isFinite(sum)) {
+        doc.stock = sum;
+        await doc.save();
+      }
+    }
+  } catch {}
   res.status(201).json(doc);
 });
 
@@ -216,6 +227,8 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
       isActive: v?.isActive != null ? !!v.isActive : true,
       images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
     }));
+    const sum = payload.variants.filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
+    payload.stock = Number.isFinite(sum) ? sum : 0;
   }
   const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
@@ -258,6 +271,11 @@ router.post("/:id/variants", auth, requireRole("admin"), async (req, res) => {
   };
   p.variants = [...(p.variants || []), newVar];
   await p.save();
+  try {
+    const sum = (p.variants || []).filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
+    p.stock = Number.isFinite(sum) ? sum : 0;
+    await p.save();
+  } catch {}
   res.status(201).json(newVar);
 });
 
@@ -299,6 +317,11 @@ router.put("/:id/variants/:vid", auth, requireRole("admin"), async (req, res) =>
   if (Array.isArray(payload.images)) v.images = payload.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url);
   p.markModified("variants");
   await p.save();
+  try {
+    const sum = (p.variants || []).filter(x => x.isActive !== false).reduce((s, x) => s + Number(x.stock || 0), 0);
+    p.stock = Number.isFinite(sum) ? sum : 0;
+    await p.save();
+  } catch {}
   res.json(v);
 });
 
@@ -316,6 +339,11 @@ router.patch("/:id/variants/:vid/stock", auth, requireRole("admin"), async (req,
   v.stock = before - qty;
   p.markModified("variants");
   await p.save();
+  try {
+    const sum = (p.variants || []).filter(x => x.isActive !== false).reduce((s, x) => s + Number(x.stock || 0), 0);
+    p.stock = Number.isFinite(sum) ? sum : 0;
+    await p.save();
+  } catch {}
   await StockTxn.create({ product: p._id, type: req.body?.reason === "ADJUST" ? "ADJUST" : "SOLD", quantity: qty, before, after: v.stock, refType: "MANUAL", note: req.body?.note || "", variantId: v._id.toString() });
   res.json({ id: v._id.toString(), stock: v.stock });
 });
