@@ -98,7 +98,17 @@ router.post("/customer/verify-otp", async (req, res) => {
     }
   } catch {}
 
-  res.json({ message: "application_submitted" });
+  // Issue a short-lived token so user doesn't need to login immediately after signup
+  const token = jwt.sign(
+    { id: customer._id.toString(), role: "customer", email: customer.email },
+    process.env.JWT_SECRET,
+    { expiresIn: "60m" }
+  );
+  res.json({
+    message: "application_submitted",
+    token,
+    user: { id: customer._id.toString(), name: customer.name, email: customer.email, role: "customer", isKycComplete: !!customer.isKycComplete }
+  });
 });
 
 // CUSTOMER LOGIN
@@ -107,7 +117,7 @@ router.post("/customer/login", async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: "missing_fields" });
 
   const user = await Customer.findOne({ email: email.toLowerCase().trim(), isActive: true });
-  if (!user) return res.status(401).json({ error: "invalid_credentials" });
+  if (!user) return res.status(404).json({ error: "Please sign up first" });
 
   const ok = await user.comparePassword(password);
   if (!ok) return res.status(401).json({ error: "invalid_credentials" });
@@ -173,7 +183,7 @@ router.post("/customer/login-otp/send", async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: "missing_email" });
   const user = await Customer.findOne({ email: String(email).toLowerCase().trim(), isActive: true });
-  if (!user) return res.status(404).json({ error: "user_not_found" });
+  if (!user) return res.status(404).json({ error: "Please sign up first" });
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await OTP.findOneAndUpdate(
@@ -196,7 +206,7 @@ router.post("/customer/login-otp/verify", async (req, res) => {
   const record = await OTP.findOne({ email: String(email).toLowerCase().trim(), otp, purpose: "LOGIN" });
   if (!record) return res.status(400).json({ error: "invalid_otp" });
   const user = await Customer.findOne({ email: String(email).toLowerCase().trim(), isActive: true });
-  if (!user) return res.status(404).json({ error: "user_not_found" });
+  if (!user) return res.status(404).json({ error: "Please sign up first" });
   await OTP.deleteOne({ _id: record._id });
   const token = jwt.sign(
     { id: user._id.toString(), role: "customer", email: user.email },
