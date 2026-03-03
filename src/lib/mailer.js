@@ -19,7 +19,7 @@ export const sendEmail = async ({ to, subject, text, html }) => {
     await axios.post(
       `https://mail.zoho.in/api/accounts/${process.env.ZOHO_ACCOUNT_ID}/messages`,
       {
-        fromAddress: process.env.ZOHO_MAIL_FROM,
+        fromAddress: `${process.env.MAIL_FROM_NAME || process.env.COMPANY_NAME || "Click2Kart"} <${process.env.ZOHO_MAIL_FROM}>`,
         toAddress: to,
         subject,
         content

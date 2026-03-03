@@ -112,7 +112,7 @@ router.get("/:id/recommendations", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, subcategory, images, stock, gst, description, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty, store, section } = req.body || {};
+  const { name, price, category, subcategory, images, stock, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty, store, section } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -145,6 +145,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     store: store ? String(store).trim() : "",
     section: section ? String(section).trim() : "",
     minOrderQty: Number(minOrderQty || 0),
+    highlights: Array.isArray(highlights) ? highlights.map(h => String(h || '').trim()).filter(Boolean).slice(0, 12) : [],
     bulkDiscountQuantity: Number(bulkDiscountQuantity || 0),
     bulkDiscountPriceReduction: Number(bulkDiscountPriceReduction || 0),
     bulkTiers: Array.isArray(bulkTiers)
@@ -183,7 +184,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
+  const allowed = ["name", "description", "highlights", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.category != null) {
@@ -205,6 +206,9 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
     }
   }
   if (Array.isArray(payload.images)) payload.images = payload.images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url);
+  if (Array.isArray(payload.highlights)) {
+    payload.highlights = payload.highlights.map(h => String(h || '').trim()).filter(Boolean).slice(0, 12);
+  }
   if (Array.isArray(payload.bulkTiers)) {
     payload.bulkTiers = payload.bulkTiers
       .map(t => ({ quantity: Number(t?.quantity), priceReduction: Number(t?.priceReduction) }))
