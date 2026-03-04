@@ -8,11 +8,97 @@ import { computeTotals } from "../lib/invoice.js";
 import razorpay from "../lib/razorpay.js";
 import crypto from "crypto";
 import { createBillFromData } from "../lib/billing.js";
-import { sendEmail } from "../lib/mailer.js";
+import { sendEmail, renderMail } from "../lib/mailer.js";
 import AuditLog from "../models/AuditLog.js";
 import { notifyAdmin } from "../lib/socket.js";
+import fetch from "node-fetch";
 
 const router = express.Router();
+
+const getDelhiveryBase = () => (process.env.DELHIVERY_BASE_URL || "").replace(/\/+$/, "");
+const getDelhiveryToken = () => (process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
+const getDims = () => ({
+  weight: Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
+  length: Number(process.env.DELHIVERY_PACKAGE_LENGTH || 10),
+  breadth: Number(process.env.DELHIVERY_PACKAGE_WIDTH || 10),
+  height: Number(process.env.DELHIVERY_PACKAGE_HEIGHT || 10)
+});
+
+const tryCreateDelhiveryShipment = async (order) => {
+  try {
+    const base = getDelhiveryBase();
+    const token = getDelhiveryToken();
+    if (!base || !token) return null;
+    // Load customer KYC for address
+    const cust = await Customer.findOne({ phone: order.customer.phone }).select("kyc");
+    const addr = {
+      line1: cust?.kyc?.addressLine1 || "",
+      line2: cust?.kyc?.addressLine2 || "",
+      city: cust?.kyc?.city || "",
+      state: cust?.kyc?.state || "",
+      pincode: cust?.kyc?.pincode || ""
+    };
+    if (!addr.pincode) return null;
+    // Optional: quick serviceability check (non-blocking)
+    try {
+      await fetch(`${base}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(addr.pincode)}`, { headers: { Authorization: `Token ${token}` } });
+    } catch {}
+    // Generate waybill
+    let waybill = "TEMPWB" + Math.floor(Math.random() * 1e6);
+    try {
+      const wbResp = await fetch(`${base}/waybill/api/bulk/json/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Token ${token}` },
+        body: JSON.stringify({ format: "json", count: 1 })
+      });
+      const wbData = await wbResp.json();
+      const wb = Array.isArray(wbData?.waybill) ? wbData.waybill[0] : (wbData?.waybill || wbData?.waybills?.[0]);
+      if (wb) waybill = wb;
+    } catch {}
+    // Prepare payload
+    const pickup = process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse";
+    const paymentMode = order.paymentMethod === "RAZORPAY" ? "Prepaid" : "COD";
+    const codAmount = paymentMode === "COD" ? Number(order.codDueAmount || order.totalEstimate || 0).toFixed(2) : "0.00";
+    const dims = getDims();
+    const payload = {
+      pickup_location: pickup,
+      shipments: [
+        {
+          waybill,
+          name: order.customer.name,
+          add: addr.line1,
+          address2: addr.line2,
+          city: addr.city,
+          state: addr.state,
+          country: "India",
+          phone: order.customer.phone,
+          pin: addr.pincode,
+          order: order._id.toString(),
+          payment_mode: paymentMode,
+          products_desc: (order.items || []).map(i => i.name).join(", ").slice(0, 200),
+          cod_amount: codAmount,
+          total_amount: Number(order.totalEstimate || 0).toFixed(2),
+          ...dims
+        }
+      ]
+    };
+    const resp = await fetch(`${base}/api/cmu/create.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Token ${token}` },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    const wbFinal = data?.packages?.[0]?.waybill || data?.waybill || waybill;
+    const status = data?.packages?.[0]?.status?.status || data?.status || "CREATED";
+    const trackingUrl = `https://www.delhivery.com/track/package/${wbFinal}`;
+    order.shipping = { provider: "DELHIVERY", waybill: wbFinal, status, trackingUrl };
+    order.shippingAddress = addr;
+    await order.save();
+    return { waybill: wbFinal, status, trackingUrl };
+  } catch {
+    return null;
+  }
+};
 
 router.post("/", auth, requireRole("customer"), async (req, res) => {
   const { items, notes, paymentMethod } = req.body || {};
@@ -102,7 +188,24 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
   try {
     const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-    if (to) await sendEmail({ to, subject: `Order placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Order Received</h3><p>Order ID: ${doc._id}</p><p>Total: ₹${totals.total}</p></div>` });
+    const html = renderMail({
+      heading: "Order Received",
+      subheading: "Thanks for your order. We’ve started processing it.",
+      highlight: `Order ID: ${doc._id}`,
+      blocks: [
+        { label: "Total", value: `₹${Number(totals.total).toLocaleString("en-IN")}` },
+        { label: "Payment Method", value: doc.paymentMethod },
+        { label: "Status", value: orderStatus }
+      ],
+      items: doc.items.map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        price: it.price,
+        lineTotal: it.lineTotal
+      })),
+      totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total }
+    });
+    if (to) await sendEmail({ to, subject: `Order placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
   } catch {}
 
   res.status(201).json({
@@ -186,7 +289,27 @@ router.post("/verify-payment", async (req, res) => {
     try {
       await AuditLog.create({ actorId: "", actorRole: "system", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Payment verified (${order.paymentMethod})` });
       const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-      if (to) await sendEmail({ to, subject: `Payment confirmed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Payment Confirmed</h3><p>Order ID: ${order._id}</p></div>` });
+      const paidText = order.paymentMethod === "COD_20"
+        ? `Advance Paid: ₹${Number(order.totalEstimate * 0.2).toLocaleString("en-IN")}`
+        : `Amount Paid: ₹${Number(order.totalEstimate).toLocaleString("en-IN")}`;
+      const html = renderMail({
+        heading: "Payment Confirmed",
+        subheading: "We’ve confirmed your payment and are preparing your shipment.",
+        highlight: `Order ID: ${order._id}`,
+        blocks: [
+          { label: "Payment Method", value: order.paymentMethod },
+          { label: "Payment", value: paidText },
+          { label: "Current Status", value: order.status }
+        ]
+      });
+      if (to) await sendEmail({ to, subject: `Payment confirmed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+    } catch {}
+    
+    // Auto-create shipment for confirmed orders (prepaid or COD_20)
+    try {
+      if (order.status === "CONFIRMED") {
+        await tryCreateDelhiveryShipment(order);
+      }
     } catch {}
     
     res.json({ success: true, message: "payment_verified" });
@@ -229,6 +352,11 @@ router.patch("/:id/approve-cash", auth, requireRole("admin"), async (req, res) =
   order.paymentStatus = "PAID";
   order.status = "CONFIRMED";
   await order.save();
+
+  // Auto-create shipment after cash approval
+  try {
+    await tryCreateDelhiveryShipment(order);
+  } catch {}
 
   // Trigger billing
   try {
@@ -351,7 +479,17 @@ router.patch("/:id/ship", auth, requireRole("admin"), async (req, res) => {
   try {
     await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${prev} → SHIPPED` });
     const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-    if (to) await sendEmail({ to, subject: `Order shipped - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Shipped</h3><p>Order ID: ${order._id}</p><p>${order.shipping.provider} • ${order.shipping.waybill}</p></div>` });
+    const html = renderMail({
+      heading: "Your Order is Shipped",
+      subheading: "We’ve handed your package to our courier partner.",
+      highlight: `Order ID: ${order._id}`,
+      blocks: [
+        { label: "Courier", value: `${order.shipping.provider} • ${order.shipping.waybill}` },
+        { label: "Track", value: order.shipping.trackingUrl || "Tracking link will update shortly" },
+        { label: "Current Status", value: "SHIPPED" }
+      ]
+    });
+    if (to) await sendEmail({ to, subject: `Order shipped - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
   } catch {}
   res.json({ success: true, order });
 });
@@ -371,7 +509,16 @@ router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
   try {
     await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${prev2} → DELIVERED` });
     const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-    if (to) await sendEmail({ to, subject: `Order delivered - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: `<div style="font-family:ui-sans-serif"><h3>Delivered</h3><p>Order ID: ${order._id}</p></div>` });
+    const html = renderMail({
+      heading: "Delivered",
+      subheading: "Your order has been delivered. We hope you enjoy your purchase.",
+      highlight: `Order ID: ${order._id}`,
+      blocks: [
+        { label: "Final Status", value: "DELIVERED" },
+        { label: "Waybill", value: order.shipping?.waybill || "-" }
+      ]
+    });
+    if (to) await sendEmail({ to, subject: `Order delivered - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
   } catch {}
   res.json({ success: true, order });
 });
