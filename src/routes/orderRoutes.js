@@ -45,6 +45,10 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   }
 
   const totals = computeTotals(products, items);
+  const minAmount = Number(process.env.MIN_ORDER_AMOUNT || 5000);
+  if (totals.total < minAmount) {
+    return res.status(400).json({ error: "min_order_not_met", minAmount });
+  }
   const orderItems = totals.items.map((it) => {
     const p = products.find(x => x._id.toString() === it.product.toString());
     const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
