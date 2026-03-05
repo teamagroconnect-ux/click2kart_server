@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import fetch from "node-fetch";
+import { checkServiceability as svcCheck, estimateFreight as svcEstimate, createShipment as svcCreate, getManifestStatus as svcStatus, trackShipment as svcTrack } from "../services/delhivery.service.js";
 import PDFDocument from "pdfkit";
 
 const router = express.Router();
@@ -11,6 +12,127 @@ const getBase = () => (process.env.DELHIVERY_BASE_URL || "").replace(/\/+$/, "")
 const getToken = () => (process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
 const getLtlBase = () => (process.env.DELHIVERY_LTL_BASE_URL || "").replace(/\/+$/, "");
 
+router.get("/check-pincode", async (req, res) => {
+  const pincode = String(req.query.pincode || "").trim();
+  if (!pincode) return res.status(400).json({ error: "missing_pincode" });
+  try {
+    const data = await svcCheck(pincode);
+    const svc = data?.data || data || {};
+    const delivery_available = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
+    const cod_available = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
+    const now = new Date();
+    const add = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
+    const mn = Number(svc.min_tat || svc.tat_min || svc.eta_min_days || svc.eta_min);
+    const mx = Number(svc.max_tat || svc.tat_max || svc.eta_max_days || svc.eta_max);
+    const low = Number.isFinite(mn) && mn > 0 ? mn : 3;
+    const high = Number.isFinite(mx) && mx > 0 ? mx : Math.max(low, low + 2);
+    const etaStart = add(now, low).toISOString();
+    const etaEnd = add(now, high).toISOString();
+    res.json({ pincode, delivery_available, cod_available, etaStart, etaEnd });
+  } catch (e) {
+    res.status(502).json({ error: "serviceability_failed" });
+  }
+});
+
+router.post("/calculate", async (req, res) => {
+  const origin = String(req.body?.source_pin || process.env.WAREHOUSE_PIN || process.env.ORIGIN_PIN || "").trim();
+  const dest = String(req.body?.destination_pin || "").trim();
+  const weight = Number(req.body?.weight || 0);
+  const order_amount = Number(req.body?.order_amount || 0);
+  if (!origin || !dest) return res.status(400).json({ error: "missing_pins" });
+  try {
+    const data = await svcEstimate({ source_pin: origin, destination_pin: dest, weight, order_amount });
+    const amt = Number(data?.data?.total_charges || data?.amount || data?.charge || 85) || 85;
+    const discount = amt;
+    const final = 0;
+    res.json({ origin, destination: dest, weight, amount: amt, discount, final, label: "FREE DELIVERY" });
+  } catch {
+    res.json({ origin, destination: dest, weight, amount: 85, discount: 85, final: 0, label: "FREE DELIVERY" });
+  }
+});
+
+router.post("/manifest", auth, requireRole("admin"), async (req, res) => {
+  const { orderId } = req.body || {};
+  if (!orderId || !mongoose.isValidObjectId(orderId)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(orderId);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  try {
+    const payload = {
+      pickup_location_name: process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse",
+      payment_mode: order.paymentMethod === "RAZORPAY" ? "PREPAID" : "COD",
+      weight:  Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
+      dropoff_location: {
+        pin: order.shippingAddress?.pincode || "",
+        address: [order.shippingAddress?.line1, order.shippingAddress?.line2].filter(Boolean).join(", "),
+        city: order.shippingAddress?.city || "",
+        state: order.shippingAddress?.state || ""
+      },
+      shipment_details: {
+        order_id: order._id.toString(),
+        items: order.items.map(i => ({ name: i.name, qty: i.quantity, price: i.price }))
+      },
+      invoices: [{ amount: order.totalEstimate }]
+    };
+    const resp = await svcCreate(payload);
+    const job_id = resp?.job_id || resp?.data?.job_id;
+    if (job_id) {
+      order.delhivery_job_id = job_id;
+      await order.save();
+    }
+    res.json({ job_id });
+  } catch {
+    res.status(502).json({ error: "manifest_failed" });
+  }
+});
+
+router.get("/manifest-status", auth, requireRole("admin"), async (req, res) => {
+  const job_id = String(req.query.job_id || "").trim();
+  const orderId = String(req.query.orderId || "").trim();
+  if (!job_id) return res.status(400).json({ error: "missing_job_id" });
+  try {
+    const data = await svcStatus(job_id);
+    const info = data?.data || data || {};
+    const lrn = info.lrn || info.tracking_id || info.lrn_number || "";
+    const awb = info.awb || info.waybill || info.awb_number || "";
+    if (orderId && mongoose.isValidObjectId(orderId)) {
+      const order = await Order.findById(orderId);
+      if (order) {
+        if (lrn) order.tracking_id = lrn;
+        if (awb) order.awb_number = awb;
+        if (info.status) order.shipment_status = info.status;
+        await order.save();
+      }
+    } else {
+      const order = await Order.findOne({ delhivery_job_id: job_id });
+      if (order) {
+        if (lrn) order.tracking_id = lrn;
+        if (awb) order.awb_number = awb;
+        if (info.status) order.shipment_status = info.status;
+        await order.save();
+      }
+    }
+    res.json({ job_id, lrn, awb, raw: data });
+  } catch {
+    res.status(502).json({ error: "status_failed" });
+  }
+});
+
+router.get("/track/:lrn", async (req, res) => {
+  const lrn = req.params.lrn;
+  if (!lrn) return res.status(400).json({ error: "missing_lrn" });
+  try {
+    const data = await svcTrack(lrn);
+    const status = data?.status || data?.current_status || data?.data?.status || "";
+    const order = await Order.findOne({ tracking_id: lrn });
+    if (order && status) {
+      order.shipment_status = status;
+      await order.save();
+    }
+    res.json({ lrn, status, raw: data });
+  } catch {
+    res.status(502).json({ error: "track_failed" });
+  }
+});
 router.get("/eta", async (req, res) => {
   const origin = String(req.query.origin || process.env.ORIGIN_PIN || "").trim();
   const dest = String(req.query.dest || "").trim();

@@ -51,7 +51,14 @@ const orderSchema = new mongoose.Schema(
       city: { type: String },
       state: { type: String },
       pincode: { type: String }
-    }
+    },
+    tracking_id: { type: String, default: "" },
+    awb_number: { type: String, default: "" },
+    delhivery_job_id: { type: String, default: "" },
+    shipment_status: { type: String, default: "" },
+    shipping_charge: { type: Number, default: 0 }
+    ,
+    shipping_discount: { type: Number, default: 0 }
   },
   { timestamps: true }
 );
