@@ -105,9 +105,35 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["CASH", "RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
 
-  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete");
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+
+  // Serviceability guard if Delhivery configured
+  try {
+    const token = getDelhiveryToken();
+    const base = getDelhiveryBase();
+    const ltl = process.env.DELHIVERY_LTL_BASE_URL && process.env.DELHIVERY_LTL_BASE_URL.replace(/\/+$/, "");
+    const pin = String(cust?.kyc?.pincode || "").trim();
+    if (token && pin && (ltl || base)) {
+      let delivery = true, cod = true;
+      if (ltl) {
+        const resp = await fetch(`${ltl}/pincode-service/${encodeURIComponent(pin)}`, { headers: { Authorization: `Token ${token}` } });
+        const data = await resp.json();
+        const svc = data?.data || data || {};
+        delivery = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
+        cod = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
+      } else if (base) {
+        const resp = await fetch(`${base}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pin)}`, { headers: { Authorization: `Token ${token}` } });
+        const data = await resp.json();
+        const entry = Array.isArray(data) ? data.find((x) => String(x.pin) === pin) : (data?.delivery_codes?.[0] || null);
+        delivery = !!(entry?.is_oda === false || entry?.pre_paid || entry?.delivery || entry?.serviceable);
+        cod = !!(entry?.cod || entry?.cash || entry?.cod_serviceable);
+      }
+      if (!delivery) return res.status(400).json({ error: "service_unavailable" });
+      if (paymentMethod === "COD_20" && !cod) return res.status(400).json({ error: "cod_unavailable" });
+    }
+  } catch {}
 
   const ids = items.map((x) => x.productId);
   const products = await Product.find({ _id: { $in: ids }, isActive: true });
