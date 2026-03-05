@@ -112,9 +112,6 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
   // Serviceability guard if Delhivery configured
   try {
-    if (String(process.env.ALLOW_TEST_PAYMENT_ANY_PIN || "0") === "1") {
-      // Skip serviceability restriction in test mode
-    } else {
     const token = getDelhiveryToken();
     const base = getDelhiveryBase();
     const ltl = process.env.DELHIVERY_LTL_BASE_URL && process.env.DELHIVERY_LTL_BASE_URL.replace(/\/+$/, "");
@@ -136,7 +133,6 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
       }
       if (!delivery) return res.status(400).json({ error: "service_unavailable" });
       if (paymentMethod === "COD_20" && !cod) return res.status(400).json({ error: "cod_unavailable" });
-    }
     }
   } catch {}
 
