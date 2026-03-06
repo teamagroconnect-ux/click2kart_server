@@ -8,9 +8,10 @@ import PDFDocument from "pdfkit";
 
 const router = express.Router();
 
-const getBase = () => (process.env.DELHIVERY_BASE_URL || "").replace(/\/+$/, "");
-const getToken = () => (process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
-const getLtlBase = () => (process.env.DELHIVERY_LTL_BASE_URL || "").replace(/\/+$/, "");
+const sanitize = (s) => String(s || "").trim().replace(/^['"`]+|['"`]+$/g, "").replace(/\/+$/, "");
+const getBase = () => sanitize(process.env.DELHIVERY_BASE_URL || "");
+const getToken = () => String(process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
+const getLtlBase = () => sanitize(process.env.DELHIVERY_LTL_BASE_URL || "");
 
 router.get("/check-pincode", async (req, res) => {
   const pincode = String(req.query.pincode || "").trim();
@@ -172,25 +173,36 @@ router.get("/delhivery/serviceability", async (req, res) => {
   const token = getToken();
   if (!token) return res.status(500).json({ error: "delhivery_not_configured" });
   try {
-    // Prefer LTL pincode-service if configured
     const ltlBase = getLtlBase();
     let delivery = false, cod = false, etaDaysMin = null, etaDaysMax = null;
+    let triedLegacy = false;
     if (ltlBase) {
-      const ltlUrl = `${ltlBase}/pincode-service/${encodeURIComponent(pincode)}`;
-      const ltlResp = await fetch(ltlUrl, { headers: { Authorization: `Token ${token}` } });
-      const ltlData = await ltlResp.json();
-      const svc = ltlData?.data || ltlData || {};
-      delivery = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
-      cod = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
-      const mins = [svc.min_tat, svc.tat_min, svc.eta_min_days, svc.eta_min];
-      const maxs = [svc.max_tat, svc.tat_max, svc.eta_max_days, svc.eta_max];
-      for (const v of mins) { const n = Number(v); if (Number.isFinite(n) && n > 0) { etaDaysMin = Math.round(n); break; } }
-      for (const v of maxs) { const n = Number(v); if (Number.isFinite(n) && n > 0) { etaDaysMax = Math.round(n); break; } }
-      if (etaDaysMin == null && (svc.tat || svc.eta || svc.days)) {
-        const n = Number(svc.tat ?? svc.eta ?? svc.days);
-        if (Number.isFinite(n) && n > 0) { etaDaysMin = n; etaDaysMax = n + 2; }
+      try {
+        const ltlUrl = `${ltlBase}/pincode-service/${encodeURIComponent(pincode)}`;
+        const ltlResp = await fetch(ltlUrl, { headers: { Authorization: `Token ${token}` } });
+        if (ltlResp.ok) {
+          const ltlData = await ltlResp.json();
+          const svc = ltlData?.data || ltlData || {};
+          delivery = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
+          cod = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
+          const mins = [svc.min_tat, svc.tat_min, svc.eta_min_days, svc.eta_min];
+          const maxs = [svc.max_tat, svc.tat_max, svc.eta_max_days, svc.eta_max];
+          for (const v of mins) { const n = Number(v); if (Number.isFinite(n) && n > 0) { etaDaysMin = Math.round(n); break; } }
+          for (const v of maxs) { const n = Number(v); if (Number.isFinite(n) && n > 0) { etaDaysMax = Math.round(n); break; } }
+          if (etaDaysMin == null && (svc.tat || svc.eta || svc.days)) {
+            const n = Number(svc.tat ?? svc.eta ?? svc.days);
+            if (Number.isFinite(n) && n > 0) { etaDaysMin = n; etaDaysMax = n + 2; }
+          }
+        } else {
+          triedLegacy = true;
+        }
+      } catch {
+        triedLegacy = true;
       }
     } else {
+      triedLegacy = true;
+    }
+    if (triedLegacy) {
       const base = getBase();
       if (!base) return res.status(500).json({ error: "delhivery_not_configured" });
       const url = `${base}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pincode)}`;

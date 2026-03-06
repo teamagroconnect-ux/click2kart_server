@@ -16,8 +16,9 @@ import { createShipment as svcCreate, getManifestStatus as svcStatus, estimateFr
 
 const router = express.Router();
 
-const getDelhiveryBase = () => (process.env.DELHIVERY_BASE_URL || "").replace(/\/+$/, "");
-const getDelhiveryToken = () => (process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
+const _sanitize = (s) => String(s || "").trim().replace(/^['"`]+|['"`]+$/g, "").replace(/\/+$/, "");
+const getDelhiveryBase = () => _sanitize(process.env.DELHIVERY_BASE_URL || "");
+const getDelhiveryToken = () => String(process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
 const getDims = () => ({
   weight: Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
   length: Number(process.env.DELHIVERY_PACKAGE_LENGTH || 10),
