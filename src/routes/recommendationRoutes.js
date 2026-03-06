@@ -58,11 +58,54 @@ router.get("/reorder", auth, requireRole("customer"), async (req, res) => {
   res.json(ordered.map(d => sanitizeForViewer(d, true)));
 });
 
-// Frequently bought together based on co-occurrence in Orders
+// Trending products for Home Page
+router.get("/trending", async (req, res) => {
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
+  // Criteria: high rating, bestseller, or recently added with stock
+  const items = await Product.find({ isActive: true, stock: { $gt: 0 } })
+    .sort({ ratingCount: -1, createdAt: -1 })
+    .limit(limit);
+  const canView = isViewerAuthorized(req);
+  res.json(items.map(d => sanitizeForViewer(d, canView)));
+});
+
+// Similar products by category & brand
+router.get("/similar/:productId", async (req, res) => {
+  const pid = req.params.productId;
+  if (!mongoose.isValidObjectId(pid)) return res.status(400).json({ error: "invalid_id" });
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 8));
+  
+  const base = await Product.findById(pid).select("category brand price");
+  if (!base) return res.status(404).json({ error: "not_found" });
+
+  const priceRange = {
+    $gte: Math.max(0, Number(base.price || 0) * 0.7),
+    $lte: Number(base.price || 0) * 1.3
+  };
+
+  const items = await Product.find({
+    isActive: true,
+    _id: { $ne: base._id },
+    $or: [
+      { category: base.category },
+      { brand: base.brand }
+    ],
+    ...(base.price != null ? { price: priceRange } : {})
+  })
+  .sort({ ratingCount: -1, stock: -1 })
+  .limit(limit);
+
+  const canView = isViewerAuthorized(req);
+  res.json(items.map(d => sanitizeForViewer(d, canView)));
+});
+
+// Frequently bought together based on co-occurrence in Orders with category fallback
 router.get("/frequently-bought/:productId", async (req, res) => {
   const pid = req.params.productId;
   if (!mongoose.isValidObjectId(pid)) return res.status(400).json({ error: "invalid_id" });
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 8));
+  
+  // 1. Get co-occurring products from orders
   const agg = await Order.aggregate([
     { $match: { "items.product": new mongoose.Types.ObjectId(pid) } },
     { $project: { items: 1 } },
@@ -72,7 +115,24 @@ router.get("/frequently-bought/:productId", async (req, res) => {
     { $sort: { count: -1 } },
     { $limit: limit }
   ]);
-  const ids = agg.map(a => a._id);
+  
+  let ids = agg.map(a => a._id);
+  
+  // 2. Fallback: if not enough co-occurring products, add products from same category
+  if (ids.length < 4) {
+    const base = await Product.findById(pid).select("category");
+    if (base && base.category) {
+      const more = await Product.find({ 
+        category: base.category, 
+        _id: { $nin: [...ids, new mongoose.Types.ObjectId(pid)] },
+        isActive: true 
+      })
+      .select("_id")
+      .limit(limit - ids.length);
+      ids = [...ids, ...more.map(m => m._id)];
+    }
+  }
+
   const docs = await Product.find({ _id: { $in: ids }, isActive: true });
   const canView = isViewerAuthorized(req);
   res.json(docs.map(d => sanitizeForViewer(d, canView)));
