@@ -18,7 +18,7 @@ router.get("/stats", auth, requireRole("admin"), async (req, res) => {
       .sort({ stock: 1 })
       .limit(10),
     Order.countDocuments({ status: "NEW" }),
-    Order.countDocuments({ status: "PENDING_CASH_APPROVAL" })
+    Order.countDocuments({ status: "PENDING_ADMIN_APPROVAL" })
   ]);
   res.json({ totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock, newOrders, pendingCash });
 });
