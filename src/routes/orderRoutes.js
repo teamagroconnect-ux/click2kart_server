@@ -195,7 +195,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     }
   }
 
-  const orderStatus = paymentMethod === "CASH" ? "PENDING_CASH_APPROVAL" : "NEW";
+  const orderStatus = paymentMethod === "CASH" ? "PENDING_CASH_APPROVAL" : "PENDING_PAYMENT";
 
   const doc = await Order.create({
     customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
@@ -212,29 +212,28 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
   if (paymentMethod === "CASH") {
     notifyAdmin("new_offline_order", doc);
+    try {
+      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+      const html = renderMail({
+        heading: "Order Received",
+        subheading: "Thanks for your order. We’ve started processing it.",
+        highlight: `Order ID: ${doc._id}`,
+        blocks: [
+          { label: "Total", value: `₹${Number(totals.total).toLocaleString("en-IN")}` },
+          { label: "Payment Method", value: doc.paymentMethod },
+          { label: "Status", value: orderStatus }
+        ],
+        items: doc.items.map(it => ({
+          name: it.name,
+          quantity: it.quantity,
+          price: it.price,
+          lineTotal: it.lineTotal
+        })),
+        totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total }
+      });
+      if (to) await sendEmail({ to, subject: `Order placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+    } catch {}
   }
-
-  try {
-    const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-    const html = renderMail({
-      heading: "Order Received",
-      subheading: "Thanks for your order. We’ve started processing it.",
-      highlight: `Order ID: ${doc._id}`,
-      blocks: [
-        { label: "Total", value: `₹${Number(totals.total).toLocaleString("en-IN")}` },
-        { label: "Payment Method", value: doc.paymentMethod },
-        { label: "Status", value: orderStatus }
-      ],
-      items: doc.items.map(it => ({
-        name: it.name,
-        quantity: it.quantity,
-        price: it.price,
-        lineTotal: it.lineTotal
-      })),
-      totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total }
-    });
-    if (to) await sendEmail({ to, subject: `Order placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
-  } catch {}
 
   res.status(201).json({
     order: doc,
