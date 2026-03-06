@@ -34,7 +34,7 @@ const orderSchema = new mongoose.Schema(
     codDueAmount: { type: Number, default: 0 },
     status: { 
       type: String, 
-      enum: ["NEW", "PENDING_PAYMENT", "PENDING_CASH_APPROVAL", "PENDING_ADMIN_APPROVAL", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"], 
+      enum: ["NEW", "PENDING_PAYMENT", "PENDING_CASH_APPROVAL", "PENDING_ADMIN_APPROVAL", "CONFIRMED", "PROCESSING", "PACKED", "SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"], 
       default: "NEW" 
     },
     notes: { type: String, default: "" },
