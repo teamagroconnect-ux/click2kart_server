@@ -520,6 +520,14 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
       codAdvancePercent: codAdvance20 ? 20 : 0,
       codDueAmount: codAdvance20 ? Number((totals.total * 0.8).toFixed(2)) : 0
     });
+    
+    // Notify admin via WebSocket
+    try {
+      notifyAdmin("new_manual_payment", doc);
+    } catch (err) {
+      console.error("Failed to notify admin via socket:", err);
+    }
+
     try {
       const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
       const html = renderMail({
@@ -552,10 +560,51 @@ router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res)
   } else if (order.paymentMethod === "COD_20") {
     order.paymentStatus = "PARTIAL";
     order.status = "CONFIRMED";
+    order.advancePaidAmount = order.manualPayment?.amountPaid || 0;
   } else {
     return res.status(400).json({ error: "not_manual_order" });
   }
+
   await order.save();
+
+  // Trigger automatic billing only for full online payments (MANUAL in this case)
+  if (order.paymentMethod === "MANUAL") {
+    try {
+      await createBillFromData({
+        customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
+        items: order.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+        paymentType: "MANUAL",
+        existingOrderId: order._id
+      });
+    } catch (err) {
+      console.error("Auto-billing failed after manual approval:", err);
+    }
+  }
+
+  // Auto-create shipment after approval
+  try {
+    if (order.status === "CONFIRMED") {
+      // Optional: compute free shipping
+      const base = Number(process.env.SHIPPING_BASE_CHARGE || 0);
+      const perKg = Number(process.env.SHIPPING_PER_KG_CHARGE || 0);
+      const minCharge = Number(process.env.SHIPPING_MIN_CHARGE || 0);
+      const weight = Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1);
+      const variable = perKg * weight;
+      const amt = Math.max(minCharge, Math.round((base + variable) * 100) / 100);
+      order.shipping_charge = amt;
+      order.shipping_discount = amt;
+      await order.save();
+
+      const created = await tryCreateDelhiveryShipment(order);
+      if (!created) {
+        order.shipment_status = "CREATION_FAILED";
+        await order.save();
+      }
+    }
+  } catch (err) {
+    console.error("Auto-shipment failed after manual approval:", err);
+  }
+
   try {
     const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
     const html = renderMail({
@@ -569,6 +618,21 @@ router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res)
     });
     if (to) await sendEmail({ to, subject: `Payment approved - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
   } catch {}
+
+  try {
+    await AuditLog.create({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      type: "PAYMENT_VERIFICATION",
+      entityType: "ORDER",
+      entityId: order._id.toString(),
+      note: `Manual payment approved for ${order.paymentMethod}`,
+      after: { paymentStatus: order.paymentStatus, status: order.status }
+    });
+  } catch (err) {
+    console.error("Failed to create audit log:", err);
+  }
+
   return res.json({ success: true });
 });
 
@@ -577,10 +641,12 @@ router.patch("/:id/reject-manual", auth, requireRole("admin"), async (req, res) 
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
-  if (order.paymentMethod !== "MANUAL") return res.status(400).json({ error: "not_manual_order" });
+  if (order.paymentMethod !== "MANUAL" && order.paymentMethod !== "COD_20") return res.status(400).json({ error: "not_manual_order" });
+  
   order.paymentStatus = "FAILED";
   order.status = "CANCELLED";
   await order.save();
+
   try {
     const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
     const html = renderMail({
@@ -588,13 +654,53 @@ router.patch("/:id/reject-manual", auth, requireRole("admin"), async (req, res) 
       subheading: "We could not verify your payment. Please contact support or resubmit.",
       highlight: `Order ID: ${order._id}`,
       blocks: [
-        { label: "Payment Method", value: "Manual (UPI/Bank)" },
+        { label: "Payment Method", value: order.paymentMethod },
         { label: "Current Status", value: "CANCELLED" }
       ]
     });
     if (to) await sendEmail({ to, subject: `Payment rejected - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
   } catch {}
+
+  try {
+    await AuditLog.create({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      type: "PAYMENT_VERIFICATION",
+      entityType: "ORDER",
+      entityId: order._id.toString(),
+      note: `Manual payment rejected for ${order.paymentMethod}`,
+      after: { paymentStatus: order.paymentStatus, status: order.status }
+    });
+  } catch (err) {
+    console.error("Failed to create audit log:", err);
+  }
+
   return res.json({ success: true });
+});
+
+// Get manual payment verification history
+router.get("/payment-history", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const logs = await AuditLog.find({ type: "PAYMENT_VERIFICATION" })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    
+    // Enrich with order details
+    const orderIds = logs.map(l => l.entityId);
+    const orders = await Order.find({ _id: { $in: orderIds } }).select("customer totalEstimate paymentMethod manualPayment");
+    
+    const enriched = logs.map(log => {
+      const order = orders.find(o => o._id.toString() === log.entityId);
+      return {
+        ...log.toObject(),
+        order: order || null
+      };
+    });
+
+    res.json(enriched);
+  } catch (err) {
+    res.status(500).json({ error: "failed_to_fetch_history" });
+  }
 });
 
 // Finalize COD and generate bill (admin)
@@ -680,7 +786,12 @@ router.get("/", auth, requireRole("admin"), async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const filter = {};
-  if (status) filter.status = status;
+  if (status) {
+    filter.status = status;
+  } else {
+    // By default, exclude orders waiting for manual payment verification
+    filter.status = { $ne: "PENDING_ADMIN_APPROVAL" };
+  }
   const items = await Order.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit);
   res.json({ page, limit, count: items.length, items });
 });
