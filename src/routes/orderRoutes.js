@@ -615,32 +615,41 @@ router.patch("/:id/finalize-cod", auth, requireRole("admin"), async (req, res) =
   res.json({ success: true });
 });
 
-// Admin approves Cash Payment
+// Admin approves Manual/Offline Payment
 router.patch("/:id/approve-cash", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
-  if (order.paymentMethod !== "CASH") return res.status(400).json({ error: "not_a_cash_order" });
+  
+  // Accept both CASH and COD_20 (for advance verification)
+  if (!["CASH", "COD_20"].includes(order.paymentMethod)) {
+    return res.status(400).json({ error: "not_a_manual_or_cod_order" });
+  }
 
-  order.paymentStatus = "PAID";
+  if (order.paymentMethod === "CASH") {
+    order.paymentStatus = "PAID";
+  } else {
+    // For COD_20, it's PARTIAL since only advance is paid
+    order.paymentStatus = "PARTIAL";
+  }
+  
   order.status = "CONFIRMED";
   await order.save();
 
-  // Auto-create shipment after cash approval
-  try {
-    await tryCreateDelhiveryShipment(order);
-  } catch {}
-
-  // Trigger billing
+  // Trigger billing immediately upon confirmation
   try {
     await createBillFromData({
       customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
-      items: order.items.map(it => ({ product: it.product, quantity: it.quantity })),
-      paymentType: "CASH",
+      items: order.items.map(it => ({ 
+        product: it.product, 
+        quantity: it.quantity,
+        variantId: it.variantId 
+      })),
+      paymentType: order.paymentMethod,
       existingOrderId: order._id
     });
   } catch (err) {
-    console.error("Billing failed after cash approval:", err);
+    console.error("Billing failed after approval:", err);
   }
   
   res.json({ success: true, order });
