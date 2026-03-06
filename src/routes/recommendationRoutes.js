@@ -119,12 +119,13 @@ router.get("/frequently-bought/:productId", async (req, res) => {
   let ids = agg.map(a => a._id);
   
   // 2. Fallback: if not enough co-occurring products, add products from same category
+  const excludeIds = [...ids, new mongoose.Types.ObjectId(pid)];
   if (ids.length < 4) {
     const base = await Product.findById(pid).select("category");
     if (base && base.category) {
       const more = await Product.find({ 
         category: base.category, 
-        _id: { $nin: [...ids, new mongoose.Types.ObjectId(pid)] },
+        _id: { $nin: excludeIds },
         isActive: true 
       })
       .select("_id")
@@ -133,9 +134,14 @@ router.get("/frequently-bought/:productId", async (req, res) => {
     }
   }
 
-  const docs = await Product.find({ _id: { $in: ids }, isActive: true });
+  // Final check to ensure current product is NEVER in the list
+  const finalExclude = new Set(excludeIds.map(id => id.toString()));
+  const docs = await Product.find({ 
+    _id: { $in: ids, $ne: new mongoose.Types.ObjectId(pid) }, 
+    isActive: true 
+  });
   const canView = isViewerAuthorized(req);
-  res.json(docs.map(d => sanitizeForViewer(d, canView)));
+  res.json(docs.filter(d => !finalExclude.has(d._id.toString())).map(d => sanitizeForViewer(d, canView)));
 });
 
 export default router;

@@ -102,8 +102,17 @@ const tryCreateDelhiveryShipment = async (order) => {
   }
 };
 
+// Create new order
 router.post("/", auth, requireRole("customer"), async (req, res) => {
-  const { items, notes, paymentMethod } = req.body || {};
+  const { 
+    items, 
+    notes, 
+    paymentMethod,
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature
+  } = req.body || {};
+
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["CASH", "RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
 
@@ -311,7 +320,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
       items: orderItems,
       totalEstimate: totals.total,
-      status: "CONFIRMED",
+      status: "CONFIRMED", // Razorpay orders are directly confirmed after successful payment
       paymentMethod,
       paymentStatus: paymentMethod === "COD_20" ? "PARTIAL" : "PAID",
       razorpayOrderId: razorpay_order_id,
