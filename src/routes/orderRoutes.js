@@ -12,6 +12,12 @@ import { sendEmail, renderMail } from "../lib/mailer.js";
 import AuditLog from "../models/AuditLog.js";
 import { notifyAdmin } from "../lib/socket.js";
 import fetch from "node-fetch";
+import { 
+  cancelShipment, 
+  getShippingLabels, 
+  createPickupRequest, 
+  cancelPickupRequest 
+} from "../lib/delhiveryLtl.js";
 // LTL services removed
 
 const router = express.Router();
@@ -686,30 +692,39 @@ router.get("/:id", auth, requireRole("admin"), async (req, res) => {
   res.json(doc);
 });
 
+// Admin update status/LRN
 router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const { status } = req.body || {};
+  const { status, lrn } = req.body || {};
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
-  const allowed = new Set(["NEW", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"]);
-  if (!allowed.has(status)) return res.status(400).json({ error: "invalid_status" });
-  const okTransitions = {
-    NEW: new Set(["CONFIRMED", "CANCELLED"]),
-    PENDING_CASH_APPROVAL: new Set(["CONFIRMED", "CANCELLED"]),
-    CONFIRMED: new Set(["SHIPPED", "CANCELLED"]),
-    SHIPPED: new Set(["DELIVERED", "RETURNED"]),
-    DELIVERED: new Set(["FULFILLED", "RETURNED"]),
-    CANCELLED: new Set([]),
-    RETURNED: new Set([]),
-    FULFILLED: new Set([])
-  };
-  const curr = order.status;
-  if (!okTransitions[curr] || !okTransitions[curr].has(status)) return res.status(400).json({ error: "invalid_transition" });
-  order.status = status;
+
+  if (lrn !== undefined) {
+    order.lrn = lrn;
+  }
+
+  if (status) {
+    const allowed = new Set(["NEW", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"]);
+    if (!allowed.has(status)) return res.status(400).json({ error: "invalid_status" });
+    const okTransitions = {
+      NEW: new Set(["CONFIRMED", "CANCELLED"]),
+      PENDING_CASH_APPROVAL: new Set(["CONFIRMED", "CANCELLED"]),
+      CONFIRMED: new Set(["SHIPPED", "CANCELLED"]),
+      SHIPPED: new Set(["DELIVERED", "RETURNED"]),
+      DELIVERED: new Set(["FULFILLED", "RETURNED"]),
+      CANCELLED: new Set([]),
+      RETURNED: new Set([]),
+      FULFILLED: new Set([])
+    };
+    const curr = order.status;
+    if (!okTransitions[curr] || !okTransitions[curr].has(status)) return res.status(400).json({ error: "invalid_transition" });
+    order.status = status;
+    try {
+      await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${curr} → ${status}` });
+    } catch {}
+  }
+
   const updated = await order.save();
-  try {
-    await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: updated._id.toString(), note: `Status ${curr} → ${status}` });
-  } catch {}
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
 });
@@ -803,6 +818,97 @@ router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
     if (to) await sendEmail({ to, subject: `Order delivered - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
   } catch {}
   res.json({ success: true, order });
+});
+
+/**
+ * DELHIIVERY LTL INTEGRATION ROUTES
+ */
+
+// 1. Cancel Shipment (Delhivery LTL)
+router.delete("/:id/delhivery/cancel", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order || !order.lrn) return res.status(404).json({ error: "LRN not found for this order" });
+  
+  try {
+    const result = await cancelShipment(order.lrn);
+    if (result.success || result.status === 'success') {
+      order.status = "CANCELLED";
+      order.shipping = order.shipping || {};
+      order.shipping.status = "CANCELLED";
+      await order.save();
+      return res.json({ success: true, data: result });
+    }
+    res.status(400).json({ error: result.message || "Failed to cancel shipment" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Get Shipping Labels (Delhivery LTL)
+router.get("/:id/delhivery/labels", auth, requireRole("admin"), async (req, res) => {
+  const { size = 'std' } = req.query;
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order || !order.lrn) return res.status(404).json({ error: "LRN not found" });
+  
+  try {
+    const result = await getShippingLabels(size, order.lrn);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Create Pickup Request (Delhivery LTL)
+router.post("/:id/delhivery/pickup", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "order_not_found" });
+
+  const { client_warehouse, pickup_date, start_time, expected_package_count } = req.body;
+  if (!client_warehouse || !pickup_date || !start_time || !expected_package_count) {
+    return res.status(400).json({ error: "missing_pickup_fields" });
+  }
+
+  try {
+    const result = await createPickupRequest({
+      client_warehouse,
+      pickup_date,
+      start_time,
+      expected_package_count: Number(expected_package_count)
+    });
+
+    if (result.pickup_id) {
+      order.pickup_id = result.pickup_id;
+      order.pickup_date = pickup_date;
+      await order.save();
+      return res.json({ success: true, data: result });
+    }
+    res.status(400).json({ error: result.message || "Failed to create pickup request" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Cancel Pickup Request (Delhivery LTL)
+router.delete("/:id/delhivery/pickup", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order || !order.pickup_id) return res.status(404).json({ error: "Pickup ID not found" });
+
+  try {
+    const result = await cancelPickupRequest(order.pickup_id);
+    if (result.success || result.status === 'success') {
+      order.pickup_id = "";
+      order.pickup_date = "";
+      await order.save();
+      return res.json({ success: true, data: result });
+    }
+    res.status(400).json({ error: result.message || "Failed to cancel pickup request" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

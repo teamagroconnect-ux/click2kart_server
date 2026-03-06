@@ -59,6 +59,9 @@ const orderSchema = new mongoose.Schema(
     },
     tracking_id: { type: String, default: "" },
     awb_number: { type: String, default: "" },
+    lrn: { type: String, default: "" },
+    pickup_id: { type: String, default: "" },
+    pickup_date: { type: String, default: "" },
     delhivery_job_id: { type: String, default: "" },
     shipment_status: { type: String, default: "" },
     shipping_charge: { type: Number, default: 0 }
