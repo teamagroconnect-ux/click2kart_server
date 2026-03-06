@@ -12,12 +12,33 @@ const sanitize = (s) => String(s || "").trim().replace(/^['"`]+|['"`]+$/g, "").r
 const getBase = () => sanitize(process.env.DELHIVERY_BASE_URL || "");
 const getToken = () => String(process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
 const getLtlBase = () => sanitize(process.env.DELHIVERY_LTL_BASE_URL || "");
+const _cache = new Map();
+const _now = () => Date.now();
+const _putCache = (k, v, ttlMs) => _cache.set(k, { v, e: _now() + ttlMs });
+const _getCache = (k) => {
+  const it = _cache.get(k);
+  if (!it) return null;
+  if (_now() > it.e) { _cache.delete(k); return null; }
+  return it.v;
+};
 
 router.get("/check-pincode", async (req, res) => {
   const pincode = String(req.query.pincode || "").trim();
   if (!pincode) return res.status(400).json({ error: "missing_pincode" });
   try {
+    const cacheKey = `chk:${pincode}`;
+    const cached = _getCache(cacheKey);
+    if (cached) return res.json(cached);
     const data = await svcCheck(pincode);
+    if (data && typeof data.delivery_available === "boolean") {
+      const now = new Date();
+      const add = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
+      const etaStart = add(now, 3).toISOString();
+      const etaEnd = add(now, 6).toISOString();
+      const result = { pincode, delivery_available: data.delivery_available, cod_available: data.cod_available, etaStart, etaEnd };
+      _putCache(cacheKey, result, 24 * 60 * 60 * 1000);
+      return res.json(result);
+    }
     const svc = data?.data || data || {};
     const delivery_available = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
     const cod_available = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
@@ -29,7 +50,9 @@ router.get("/check-pincode", async (req, res) => {
     const high = Number.isFinite(mx) && mx > 0 ? mx : Math.max(low, low + 2);
     const etaStart = add(now, low).toISOString();
     const etaEnd = add(now, high).toISOString();
-    res.json({ pincode, delivery_available, cod_available, etaStart, etaEnd });
+    const result = { pincode, delivery_available, cod_available, etaStart, etaEnd };
+    _putCache(cacheKey, result, 24 * 60 * 60 * 1000);
+    res.json(result);
   } catch (e) {
     res.status(502).json({ error: "serviceability_failed" });
   }
@@ -46,9 +69,29 @@ router.post("/calculate", async (req, res) => {
     const amt = Number(data?.data?.total_charges || data?.amount || data?.charge || 85) || 85;
     const discount = amt;
     const final = 0;
-    res.json({ origin, destination: dest, weight, amount: amt, discount, final, label: "FREE DELIVERY" });
+    res.json({
+      origin,
+      destination: dest,
+      weight,
+      amount: amt,
+      discount,
+      final,
+      label: "FREE DELIVERY",
+      delivery_charge: amt,
+      final_charge: final
+    });
   } catch {
-    res.json({ origin, destination: dest, weight, amount: 85, discount: 85, final: 0, label: "FREE DELIVERY" });
+    res.json({
+      origin,
+      destination: dest,
+      weight,
+      amount: 85,
+      discount: 85,
+      final: 0,
+      label: "FREE DELIVERY",
+      delivery_charge: 85,
+      final_charge: 0
+    });
   }
 });
 
@@ -123,7 +166,13 @@ router.get("/track/:lrn", async (req, res) => {
   if (!lrn) return res.status(400).json({ error: "missing_lrn" });
   try {
     const data = await svcTrack(lrn);
-    const status = data?.status || data?.current_status || data?.data?.status || "";
+    const raw = data?.status || data?.current_status || data?.data?.status || "";
+    let status = String(raw || "").trim();
+    const u = status.toUpperCase();
+    if (u.includes("DELIVER")) status = "DELIVERED";
+    else if (u.includes("TRANSIT")) status = "IN_TRANSIT";
+    else if (u.includes("PICK")) status = "PICKED_UP";
+    else if (u.includes("MANIFEST")) status = "MANIFESTED";
     const order = await Order.findOne({ tracking_id: lrn });
     if (order && status) {
       order.shipment_status = status;
@@ -173,6 +222,9 @@ router.get("/delhivery/serviceability", async (req, res) => {
   const token = getToken();
   if (!token) return res.status(500).json({ error: "delhivery_not_configured" });
   try {
+    const cacheKey = `svc:${pincode}`;
+    const cached = _getCache(cacheKey);
+    if (cached) return res.json(cached);
     const ltlBase = getLtlBase();
     let delivery = false, cod = false, etaDaysMin = null, etaDaysMax = null;
     let triedLegacy = false;
@@ -182,6 +234,7 @@ router.get("/delhivery/serviceability", async (req, res) => {
         const ltlResp = await fetch(ltlUrl, { headers: { Authorization: `Token ${token}` } });
         if (ltlResp.ok) {
           const ltlData = await ltlResp.json();
+          console.log("Delhivery LTL:", ltlData);
           const svc = ltlData?.data || ltlData || {};
           delivery = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
           cod = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
@@ -208,6 +261,7 @@ router.get("/delhivery/serviceability", async (req, res) => {
       const url = `${base}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pincode)}`;
       const resp = await fetch(url, { headers: { Authorization: `Token ${token}` } });
       const data = await resp.json();
+      console.log("Delhivery Legacy:", data);
       const entry = Array.isArray(data) ? data.find((x) => String(x.pin) === pincode) : (data?.delivery_codes?.[0] || null);
       delivery = !!(entry?.is_oda === false || entry?.pre_paid || entry?.delivery || entry?.serviceable);
       cod = !!(entry?.cod || entry?.cash || entry?.cod_serviceable);
@@ -225,7 +279,9 @@ router.get("/delhivery/serviceability", async (req, res) => {
     const high = etaDaysMax != null ? Math.max(low, etaDaysMax) : 6;
     const etaStart = add(now, low).toISOString();
     const etaEnd = add(now, high).toISOString();
-    res.json({ pincode, delivery_available: delivery, cod_available: cod, etaStart, etaEnd });
+    const result = { pincode, delivery_available: delivery, cod_available: cod, etaStart, etaEnd };
+    _putCache(cacheKey, result, 24 * 60 * 60 * 1000);
+    res.json(result);
   } catch (e) {
     const now = new Date();
     const add = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
