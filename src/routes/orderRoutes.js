@@ -12,7 +12,7 @@ import { sendEmail, renderMail } from "../lib/mailer.js";
 import AuditLog from "../models/AuditLog.js";
 import { notifyAdmin } from "../lib/socket.js";
 import fetch from "node-fetch";
-import { createShipment as svcCreate, getManifestStatus as svcStatus, estimateFreight as svcEstimate } from "../services/delhivery.service.js";
+// LTL services removed
 
 const router = express.Router();
 
@@ -333,61 +333,24 @@ router.post("/verify-payment", async (req, res) => {
       if (to) await sendEmail({ to, subject: `Payment confirmed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
     } catch {}
     
-    // Auto-create shipment (manifest) and poll for status
+    // Auto-create shipment (legacy CMU) after payment
     try {
       if (order.status === "CONFIRMED") {
-        // Estimate freight (optional) and set free delivery
-        try {
-          const origin = process.env.WAREHOUSE_PIN || process.env.ORIGIN_PIN || "";
-          if (origin && order.shippingAddress?.pincode) {
-            const est = await svcEstimate({
-              source_pin: String(origin),
-              destination_pin: String(order.shippingAddress.pincode),
-              weight: Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
-              order_amount: Number(order.totalEstimate || 0)
-            });
-            const amt = Number(est?.data?.total_charges || est?.amount || 85) || 85;
-            order.shipping_charge = amt;
-            order.shipping_discount = amt;
-            await order.save();
-          }
-        } catch {}
-        const payload = {
-          pickup_location_name: process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Main",
-          payment_mode: order.paymentMethod === "RAZORPAY" ? "PREPAID" : "COD",
-          weight: Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
-          dropoff_location: {
-            pin: order.shippingAddress?.pincode || "",
-            address: [order.shippingAddress?.line1, order.shippingAddress?.line2].filter(Boolean).join(", "),
-            city: order.shippingAddress?.city || "",
-            state: order.shippingAddress?.state || ""
-          },
-          shipment_details: {
-            order_id: order._id.toString(),
-            items: order.items.map(i => ({ name: i.name, qty: i.quantity, price: i.price }))
-          },
-          invoices: [{ amount: order.totalEstimate }]
-        };
-        const resp = await svcCreate(payload);
-        const jobId = resp?.job_id || resp?.data?.job_id;
-        if (jobId) {
-          order.delhivery_job_id = jobId;
+        // Optional: compute free shipping (mirror /calculate fallback)
+        const base = Number(process.env.SHIPPING_BASE_CHARGE || 0);
+        const perKg = Number(process.env.SHIPPING_PER_KG_CHARGE || 0);
+        const minCharge = Number(process.env.SHIPPING_MIN_CHARGE || 0);
+        const weight = Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1);
+        const variable = perKg * weight;
+        const amt = Math.max(minCharge, Math.round((base + variable) * 100) / 100);
+        order.shipping_charge = amt;
+        order.shipping_discount = amt;
+        await order.save();
+
+        const created = await tryCreateDelhiveryShipment(order);
+        if (!created) {
+          order.shipment_status = "CREATION_FAILED";
           await order.save();
-          setTimeout(async () => {
-            try {
-              const st = await svcStatus(jobId);
-              const info = st?.data || st || {};
-              const lrn = info.lrn || info.tracking_id || info.lrn_number || "";
-              const awb = info.awb || info.waybill || info.awb_number || "";
-              const fresh = await Order.findById(order._id);
-              if (fresh) {
-                if (lrn) fresh.tracking_id = lrn;
-                if (awb) fresh.awb_number = awb;
-                if (info.status) fresh.shipment_status = info.status;
-                await fresh.save();
-              }
-            } catch {}
-          }, 10000);
         }
       }
     } catch {}

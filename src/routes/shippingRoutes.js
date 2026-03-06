@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import fetch from "node-fetch";
-import { checkServiceability as svcCheck, estimateFreight as svcEstimate, createShipment as svcCreate, getManifestStatus as svcStatus, trackShipment as svcTrack } from "../services/delhivery.service.js";
+import { checkServiceability as svcCheck } from "../services/delhivery.service.js";
 import PDFDocument from "pdfkit";
 
 const router = express.Router();
@@ -11,15 +11,15 @@ const router = express.Router();
 const sanitize = (s) => String(s || "").trim().replace(/^['"`]+|['"`]+$/g, "").replace(/\/+$/, "");
 const getBase = () => sanitize(process.env.DELHIVERY_BASE_URL || "");
 const getToken = () => String(process.env.DELHIVERY_API_TOKEN || process.env.DELHIVERY_TOKEN || "");
-const getLtlBase = () => sanitize(process.env.DELHIVERY_LTL_BASE_URL || "");
+const getLtlBase = () => ""; // LTL removed
 const _cache = new Map();
 const _now = () => Date.now();
-const _putCache = (k, v, ttlMs) => _cache.set(k, { v, e: _now() + ttlMs });
-const _getCache = (k) => {
-  const it = _cache.get(k);
+const _putCache = (key, data, ttlMs) => _cache.set(key, { data, expires: _now() + ttlMs });
+const _getCache = (key) => {
+  const it = _cache.get(key);
   if (!it) return null;
-  if (_now() > it.e) { _cache.delete(k); return null; }
-  return it.v;
+  if (_now() > it.expires) { _cache.delete(key); return null; }
+  return it.data;
 };
 
 router.get("/check-pincode", async (req, res) => {
@@ -30,27 +30,11 @@ router.get("/check-pincode", async (req, res) => {
     const cached = _getCache(cacheKey);
     if (cached) return res.json(cached);
     const data = await svcCheck(pincode);
-    if (data && typeof data.delivery_available === "boolean") {
-      const now = new Date();
-      const add = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
-      const etaStart = add(now, 3).toISOString();
-      const etaEnd = add(now, 6).toISOString();
-      const result = { pincode, delivery_available: data.delivery_available, cod_available: data.cod_available, etaStart, etaEnd };
-      _putCache(cacheKey, result, 24 * 60 * 60 * 1000);
-      return res.json(result);
-    }
-    const svc = data?.data || data || {};
-    const delivery_available = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
-    const cod_available = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
     const now = new Date();
     const add = (d, n) => { const x = new Date(d.getTime()); x.setDate(x.getDate() + n); return x; };
-    const mn = Number(svc.min_tat || svc.tat_min || svc.eta_min_days || svc.eta_min);
-    const mx = Number(svc.max_tat || svc.tat_max || svc.eta_max_days || svc.eta_max);
-    const low = Number.isFinite(mn) && mn > 0 ? mn : 3;
-    const high = Number.isFinite(mx) && mx > 0 ? mx : Math.max(low, low + 2);
-    const etaStart = add(now, low).toISOString();
-    const etaEnd = add(now, high).toISOString();
-    const result = { pincode, delivery_available, cod_available, etaStart, etaEnd };
+    const etaStart = add(now, 3).toISOString();
+    const etaEnd = add(now, 6).toISOString();
+    const result = { pincode, delivery_available: !!data.delivery_available, cod_available: !!data.cod_available, etaStart, etaEnd };
     _putCache(cacheKey, result, 24 * 60 * 60 * 1000);
     res.json(result);
   } catch (e) {
@@ -65,8 +49,11 @@ router.post("/calculate", async (req, res) => {
   const order_amount = Number(req.body?.order_amount || 0);
   if (!origin || !dest) return res.status(400).json({ error: "missing_pins" });
   try {
-    const data = await svcEstimate({ source_pin: origin, destination_pin: dest, weight, order_amount });
-    const amt = Number(data?.data?.total_charges || data?.amount || data?.charge || 85) || 85;
+    const base = Number(process.env.SHIPPING_BASE_CHARGE || 0);
+    const perKg = Number(process.env.SHIPPING_PER_KG_CHARGE || 0);
+    const minCharge = Number(process.env.SHIPPING_MIN_CHARGE || 0);
+    const variable = perKg * weight;
+    const amt = Math.max(minCharge, Math.round((base + variable) * 100) / 100);
     const discount = amt;
     const final = 0;
     res.json({
@@ -85,104 +72,17 @@ router.post("/calculate", async (req, res) => {
       origin,
       destination: dest,
       weight,
-      amount: 85,
-      discount: 85,
+      amount: 100,
+      discount: 100,
       final: 0,
       label: "FREE DELIVERY",
-      delivery_charge: 85,
+      delivery_charge: 100,
       final_charge: 0
     });
   }
 });
 
-router.post("/manifest", auth, requireRole("admin"), async (req, res) => {
-  const { orderId } = req.body || {};
-  if (!orderId || !mongoose.isValidObjectId(orderId)) return res.status(400).json({ error: "invalid_id" });
-  const order = await Order.findById(orderId);
-  if (!order) return res.status(404).json({ error: "not_found" });
-  try {
-    const payload = {
-      pickup_location_name: process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse",
-      payment_mode: order.paymentMethod === "RAZORPAY" ? "PREPAID" : "COD",
-      weight:  Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
-      dropoff_location: {
-        pin: order.shippingAddress?.pincode || "",
-        address: [order.shippingAddress?.line1, order.shippingAddress?.line2].filter(Boolean).join(", "),
-        city: order.shippingAddress?.city || "",
-        state: order.shippingAddress?.state || ""
-      },
-      shipment_details: {
-        order_id: order._id.toString(),
-        items: order.items.map(i => ({ name: i.name, qty: i.quantity, price: i.price }))
-      },
-      invoices: [{ amount: order.totalEstimate }]
-    };
-    const resp = await svcCreate(payload);
-    const job_id = resp?.job_id || resp?.data?.job_id;
-    if (job_id) {
-      order.delhivery_job_id = job_id;
-      await order.save();
-    }
-    res.json({ job_id });
-  } catch {
-    res.status(502).json({ error: "manifest_failed" });
-  }
-});
-
-router.get("/manifest-status", auth, requireRole("admin"), async (req, res) => {
-  const job_id = String(req.query.job_id || "").trim();
-  const orderId = String(req.query.orderId || "").trim();
-  if (!job_id) return res.status(400).json({ error: "missing_job_id" });
-  try {
-    const data = await svcStatus(job_id);
-    const info = data?.data || data || {};
-    const lrn = info.lrn || info.tracking_id || info.lrn_number || "";
-    const awb = info.awb || info.waybill || info.awb_number || "";
-    if (orderId && mongoose.isValidObjectId(orderId)) {
-      const order = await Order.findById(orderId);
-      if (order) {
-        if (lrn) order.tracking_id = lrn;
-        if (awb) order.awb_number = awb;
-        if (info.status) order.shipment_status = info.status;
-        await order.save();
-      }
-    } else {
-      const order = await Order.findOne({ delhivery_job_id: job_id });
-      if (order) {
-        if (lrn) order.tracking_id = lrn;
-        if (awb) order.awb_number = awb;
-        if (info.status) order.shipment_status = info.status;
-        await order.save();
-      }
-    }
-    res.json({ job_id, lrn, awb, raw: data });
-  } catch {
-    res.status(502).json({ error: "status_failed" });
-  }
-});
-
-router.get("/track/:lrn", async (req, res) => {
-  const lrn = req.params.lrn;
-  if (!lrn) return res.status(400).json({ error: "missing_lrn" });
-  try {
-    const data = await svcTrack(lrn);
-    const raw = data?.status || data?.current_status || data?.data?.status || "";
-    let status = String(raw || "").trim();
-    const u = status.toUpperCase();
-    if (u.includes("DELIVER")) status = "DELIVERED";
-    else if (u.includes("TRANSIT")) status = "IN_TRANSIT";
-    else if (u.includes("PICK")) status = "PICKED_UP";
-    else if (u.includes("MANIFEST")) status = "MANIFESTED";
-    const order = await Order.findOne({ tracking_id: lrn });
-    if (order && status) {
-      order.shipment_status = status;
-      await order.save();
-    }
-    res.json({ lrn, status, raw: data });
-  } catch {
-    res.status(502).json({ error: "track_failed" });
-  }
-});
+// Removed LTL manifest/status/track endpoints
 router.get("/eta", async (req, res) => {
   const origin = String(req.query.origin || process.env.ORIGIN_PIN || "").trim();
   const dest = String(req.query.dest || "").trim();
