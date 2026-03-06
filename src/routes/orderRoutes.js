@@ -12,13 +12,6 @@ import { sendEmail, renderMail } from "../lib/mailer.js";
 import AuditLog from "../models/AuditLog.js";
 import { notifyAdmin } from "../lib/socket.js";
 import fetch from "node-fetch";
-import { 
-  cancelShipment, 
-  getShippingLabels, 
-  createPickupRequest, 
-  cancelPickupRequest 
-} from "../lib/delhiveryLtl.js";
-// LTL services removed
 
 const router = express.Router();
 
@@ -36,7 +29,8 @@ const tryCreateDelhiveryShipment = async (order) => {
   try {
     const base = getDelhiveryBase();
     const token = getDelhiveryToken();
-    if (!base || !token) return null;
+    if (!base || !token) throw new Error("Delhivery config missing");
+    
     // Load customer KYC for address
     const cust = await Customer.findOne({ phone: order.customer.phone }).select("kyc");
     const addr = {
@@ -46,25 +40,33 @@ const tryCreateDelhiveryShipment = async (order) => {
       state: cust?.kyc?.state || "",
       pincode: cust?.kyc?.pincode || ""
     };
-    if (!addr.pincode) return null;
+    if (!addr.pincode) throw new Error("Customer pincode missing");
+
     // Optional: quick serviceability check (non-blocking)
     try {
       await fetch(`${base}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(addr.pincode)}`, { headers: { Authorization: `Token ${token}` } });
     } catch {}
-    // Generate waybill
-    let waybill = "TEMPWB" + Math.floor(Math.random() * 1e6);
+
+    // Generate waybill - MUST get a real one from Delhivery
+    let waybill = "";
     try {
-      const wbResp = await fetch(`${base}/waybill/api/bulk/json/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Token ${token}` },
-        body: JSON.stringify({ format: "json", count: 1 })
+      const wbResp = await fetch(`${base}/waybill/api/bulk/json/?token=${token}&count=1&format=json`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json", Authorization: `Token ${token}` }
       });
       const wbData = await wbResp.json();
-      const wb = Array.isArray(wbData?.waybill) ? wbData.waybill[0] : (wbData?.waybill || wbData?.waybills?.[0]);
-      if (wb) waybill = wb;
-    } catch {}
+      const wb = Array.isArray(wbData) ? wbData[0] : (wbData?.waybill || wbData?.waybills?.[0]);
+      if (wb) waybill = String(wb);
+    } catch (err) {
+      console.error("Failed to fetch waybill from Delhivery:", err);
+    }
+
+    if (!waybill) {
+      throw new Error("Could not fetch a valid Waybill from Delhivery. Please check your account/API key.");
+    }
+
     // Prepare payload
-    const pickup = process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse";
+    const pickup = process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Main";
     const paymentMode = order.paymentMethod === "RAZORPAY" ? "Prepaid" : "COD";
     const codAmount = paymentMode === "COD" ? Number(order.codDueAmount || order.totalEstimate || 0).toFixed(2) : "0.00";
     const dims = getDims();
@@ -98,13 +100,22 @@ const tryCreateDelhiveryShipment = async (order) => {
     const data = await resp.json();
     const wbFinal = data?.packages?.[0]?.waybill || data?.waybill || waybill;
     const status = data?.packages?.[0]?.status?.status || data?.status || "CREATED";
-    const trackingUrl = `https://www.delhivery.com/track/package/${wbFinal}`;
-    order.shipping = { provider: "DELHIVERY", waybill: wbFinal, status, trackingUrl };
-    order.shippingAddress = addr;
-    await order.save();
-    return { waybill: wbFinal, status, trackingUrl };
-  } catch {
-    return null;
+
+    if (data.success || data.packages?.[0]?.status === "Success" || wbFinal) {
+      order.shipping = {
+        provider: "DELHIVERY",
+        waybill: wbFinal,
+        status: status,
+        trackingUrl: `https://track.delhivery.com/track/package/${wbFinal}`
+      };
+      order.status = "SHIPPED";
+      await order.save();
+      return order;
+    }
+    throw new Error(data?.packages?.[0]?.remarks?.[0] || data?.message || "Delhivery API error");
+  } catch (err) {
+    console.error("Delhivery Shipment Exception:", err);
+    throw err;
   }
 };
 
@@ -937,113 +948,11 @@ router.post("/:id/delhivery/standard-shipment", auth, requireRole("admin"), asyn
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
   
-  const result = await tryCreateDelhiveryShipment(order);
-  if (result) {
+  try {
+    const result = await tryCreateDelhiveryShipment(order);
     return res.json({ success: true, data: result });
-  }
-  res.status(400).json({ error: "shipment_creation_failed" });
-});
-
-/**
- * DELHIIVERY LTL INTEGRATION ROUTES
- */
-
-// 1. Cancel Shipment (Delhivery LTL)
-router.delete("/:id/delhivery/cancel", auth, requireRole("admin"), async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const order = await Order.findById(req.params.id);
-  if (!order || !order.lrn) return res.status(404).json({ error: "LRN not found for this order" });
-  
-  try {
-    const result = await cancelShipment(order.lrn);
-    if (result.success || result.status === 'success') {
-      order.status = "CANCELLED";
-      order.shipping = order.shipping || {};
-      order.shipping.status = "CANCELLED";
-      await order.save();
-      return res.json({ success: true, data: result });
-    }
-    res.status(400).json({ error: result.message || "Failed to cancel shipment" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 2. Get Shipping Labels (Delhivery LTL)
-router.get("/:id/delhivery/labels", auth, requireRole("admin"), async (req, res) => {
-  const { size = 'std' } = req.query;
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const order = await Order.findById(req.params.id);
-  if (!order || !order.lrn) return res.status(404).json({ error: "LRN not found" });
-  
-  try {
-    const result = await getShippingLabels(size, order.lrn);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 3. Create Pickup Request (Delhivery LTL)
-router.post("/:id/delhivery/pickup", auth, requireRole("admin"), async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const order = await Order.findById(req.params.id);
-  if (!order) return res.status(404).json({ error: "order_not_found" });
-
-  const { client_warehouse, pickup_date, start_time, expected_package_count } = req.body;
-  if (!client_warehouse || !pickup_date || !start_time || !expected_package_count) {
-    return res.status(400).json({ error: "missing_pickup_fields" });
-  }
-
-  try {
-    console.log("Creating Delhivery Pickup Request:", { client_warehouse, pickup_date, start_time, expected_package_count });
-    
-    // Delhivery LTL might expect pickup_location instead of client_warehouse
-    // and pickup_time instead of start_time. We'll send both to be safe.
-    const result = await createPickupRequest({
-      client_warehouse,
-      pickup_location: client_warehouse,
-      pickup_date,
-      start_time,
-      pickup_time: start_time,
-      expected_package_count: Number(expected_package_count)
-    });
-
-    console.log("Delhivery Pickup Response:", result);
-
-    if (result.pickup_id || result.id || result.success) {
-      order.pickup_id = result.pickup_id || result.id || "REQ_" + Date.now();
-      order.pickup_date = pickup_date;
-      await order.save();
-      return res.json({ success: true, data: result });
-    }
-    
-    // If Delhivery returns an error message in any field
-    const errorMsg = result.message || result.error || result.data?.message || "Failed to create pickup request";
-    res.status(400).json({ error: errorMsg, details: result });
-  } catch (err) {
-    console.error("Delhivery Pickup Exception:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 4. Cancel Pickup Request (Delhivery LTL)
-router.delete("/:id/delhivery/pickup", auth, requireRole("admin"), async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const order = await Order.findById(req.params.id);
-  if (!order || !order.pickup_id) return res.status(404).json({ error: "Pickup ID not found" });
-
-  try {
-    const result = await cancelPickupRequest(order.pickup_id);
-    if (result.success || result.status === 'success') {
-      order.pickup_id = "";
-      order.pickup_date = "";
-      await order.save();
-      return res.json({ success: true, data: result });
-    }
-    res.status(400).json({ error: result.message || "Failed to cancel pickup request" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message || "shipment_creation_failed" });
   }
 });
 
