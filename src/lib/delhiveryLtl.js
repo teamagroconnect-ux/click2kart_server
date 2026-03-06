@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 
 const getDelhiveryToken = () => String(process.env.DELHIVERY_TOKEN || process.env.DELHIVERY_API_TOKEN || "");
-const BASE_URL = 'https://ltl-clients-api.delhivery.com';
+const getBaseUrl = () => (process.env.DELHIVERY_LTL_BASE_URL || 'https://ltl-clients-api.delhivery.com').replace(/\/$/, "");
 
 /**
  * Cancel a manifested LRN before delivery.
@@ -9,11 +9,11 @@ const BASE_URL = 'https://ltl-clients-api.delhivery.com';
  */
 export const cancelShipment = async (lrn) => {
   const token = getDelhiveryToken();
-  const url = `${BASE_URL}/lrn/cancel/${lrn}`;
+  const url = `${getBaseUrl()}/lrn/cancel/${lrn}`;
   
   const resp = await fetch(url, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Token ${token}` }
   });
   
   return await resp.json();
@@ -26,11 +26,11 @@ export const cancelShipment = async (lrn) => {
  */
 export const getShippingLabels = async (size, lrn) => {
   const token = getDelhiveryToken();
-  const url = `${BASE_URL}/label/get_urls/${size}/${lrn}`;
+  const url = `${getBaseUrl()}/label/get_urls/${size}/${lrn}`;
   
   const resp = await fetch(url, {
     method: 'GET',
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Token ${token}` }
   });
   
   return await resp.json();
@@ -46,13 +46,14 @@ export const getShippingLabels = async (size, lrn) => {
  */
 export const createPickupRequest = async (data) => {
   const token = getDelhiveryToken();
-  const url = `${BASE_URL}/pickup_requests`;
+  // Using the specific pickup URL pattern if provided, else fallback to base
+  const url = process.env.DELHIVERY_PICKUP_API_URL || `${getBaseUrl()}/pickup_requests/`;
   
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json', 
-      Authorization: `Bearer ${token}` 
+      Authorization: `Token ${token}` 
     },
     body: JSON.stringify(data)
   });
@@ -66,11 +67,11 @@ export const createPickupRequest = async (data) => {
  */
 export const cancelPickupRequest = async (pickupId) => {
   const token = getDelhiveryToken();
-  const url = `${BASE_URL}/pickup_requests/${pickupId}`;
+  const url = `${getBaseUrl()}/pickup_requests/${pickupId}`;
   
   const resp = await fetch(url, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` }
+    headers: { Authorization: `Token ${token}` }
   });
   
   return await resp.json();

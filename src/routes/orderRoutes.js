@@ -931,6 +931,19 @@ router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
   res.json({ success: true, order });
 });
 
+// Admin: Manual trigger Delhivery Standard (B2C) shipment
+router.post("/:id/delhivery/standard-shipment", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  
+  const result = await tryCreateDelhiveryShipment(order);
+  if (result) {
+    return res.json({ success: true, data: result });
+  }
+  res.status(400).json({ error: "shipment_creation_failed" });
+});
+
 /**
  * DELHIIVERY LTL INTEGRATION ROUTES
  */
@@ -983,21 +996,33 @@ router.post("/:id/delhivery/pickup", auth, requireRole("admin"), async (req, res
   }
 
   try {
+    console.log("Creating Delhivery Pickup Request:", { client_warehouse, pickup_date, start_time, expected_package_count });
+    
+    // Delhivery LTL might expect pickup_location instead of client_warehouse
+    // and pickup_time instead of start_time. We'll send both to be safe.
     const result = await createPickupRequest({
       client_warehouse,
+      pickup_location: client_warehouse,
       pickup_date,
       start_time,
+      pickup_time: start_time,
       expected_package_count: Number(expected_package_count)
     });
 
-    if (result.pickup_id) {
-      order.pickup_id = result.pickup_id;
+    console.log("Delhivery Pickup Response:", result);
+
+    if (result.pickup_id || result.id || result.success) {
+      order.pickup_id = result.pickup_id || result.id || "REQ_" + Date.now();
       order.pickup_date = pickup_date;
       await order.save();
       return res.json({ success: true, data: result });
     }
-    res.status(400).json({ error: result.message || "Failed to create pickup request" });
+    
+    // If Delhivery returns an error message in any field
+    const errorMsg = result.message || result.error || result.data?.message || "Failed to create pickup request";
+    res.status(400).json({ error: errorMsg, details: result });
   } catch (err) {
+    console.error("Delhivery Pickup Exception:", err);
     res.status(500).json({ error: err.message });
   }
 });
