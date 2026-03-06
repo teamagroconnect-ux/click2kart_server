@@ -24,8 +24,8 @@ const orderSchema = new mongoose.Schema(
     },
     items: { type: [orderItemSchema], required: true },
     totalEstimate: { type: Number, required: true },
-    paymentMethod: { type: String, enum: ["CASH", "RAZORPAY"], default: "CASH" },
-    paymentStatus: { type: String, enum: ["PENDING", "PARTIAL", "PAID", "FAILED", "REFUNDED"], default: "PENDING" },
+    paymentMethod: { type: String, enum: ["CASH", "RAZORPAY", "MANUAL", "COD_20"], default: "CASH" },
+    paymentStatus: { type: String, enum: ["PENDING", "PAYMENT_SUBMITTED", "PARTIAL", "PAID", "FAILED", "REFUNDED"], default: "PENDING" },
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },
@@ -34,10 +34,15 @@ const orderSchema = new mongoose.Schema(
     codDueAmount: { type: Number, default: 0 },
     status: { 
       type: String, 
-      enum: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"], 
+      enum: ["NEW", "PENDING_PAYMENT", "PENDING_CASH_APPROVAL", "PENDING_ADMIN_APPROVAL", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"], 
       default: "NEW" 
     },
     notes: { type: String, default: "" },
+    manualPayment: {
+      amountPaid: { type: Number, default: 0 },
+      utr: { type: String, default: "" },
+      note: { type: String, default: "" }
+    },
     feedbackRating: { type: Number, min: 1, max: 5 },
     shipping: {
       provider: { type: String },

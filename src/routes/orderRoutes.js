@@ -248,6 +248,9 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
   try {
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(500).json({ error: "razorpay_not_configured" });
+    }
     const ids = items.map((x) => x.productId);
     const products = await Product.find({ _id: { $in: ids }, isActive: true });
     if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
@@ -257,10 +260,14 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
     const amountPaise = paymentMethod === "COD_20"
       ? Math.round(totals.total * 0.2 * 100)
       : Math.round(totals.total * 100);
+    if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
+      return res.status(400).json({ error: "invalid_amount" });
+    }
     const rp = await razorpay.orders.create({ amount: amountPaise, currency: "INR", receipt: `prepay_${Date.now()}` });
     const checksum = crypto.createHash("sha256").update(JSON.stringify({ items, paymentMethod, amountPaise })).digest("hex");
     return res.json({ razorpayOrderId: rp.id, amountPaise: rp.amount, checksum });
   } catch (e) {
+    console.error("Prepare payment failed:", e?.response?.data || e?.message || e);
     return res.status(500).json({ error: "payment_initiation_failed" });
   }
 });
