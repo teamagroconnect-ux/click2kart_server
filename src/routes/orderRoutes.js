@@ -241,6 +241,115 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   });
 });
 
+
+// Prepare Payment (no Order creation) - new flow
+router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) => {
+  const { items, paymentMethod } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
+  if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
+  try {
+    const ids = items.map((x) => x.productId);
+    const products = await Product.find({ _id: { $in: ids }, isActive: true });
+    if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
+    const totals = computeTotals(products, items);
+    const minAmount = Number(process.env.MIN_ORDER_AMOUNT || 5000);
+    if (totals.total < minAmount) return res.status(400).json({ error: "min_order_not_met", minAmount });
+    const amountPaise = paymentMethod === "COD_20"
+      ? Math.round(totals.total * 0.2 * 100)
+      : Math.round(totals.total * 100);
+    const rp = await razorpay.orders.create({ amount: amountPaise, currency: "INR", receipt: `prepay_${Date.now()}` });
+    const checksum = crypto.createHash("sha256").update(JSON.stringify({ items, paymentMethod, amountPaise })).digest("hex");
+    return res.json({ razorpayOrderId: rp.id, amountPaise: rp.amount, checksum });
+  } catch (e) {
+    return res.status(500).json({ error: "payment_initiation_failed" });
+  }
+});
+
+// Create Order after payment verification (new flow)
+router.post("/create-after-verify", auth, requireRole("customer"), async (req, res) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, items, paymentMethod, notes } = req.body || {};
+  if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
+  const body = razorpay_order_id + "|" + razorpay_payment_id;
+  const expectedSignature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(body.toString()).digest("hex");
+  if (expectedSignature !== razorpay_signature) return res.status(400).json({ error: "invalid_signature" });
+
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc");
+  if (!cust) return res.status(404).json({ error: "customer_not_found" });
+  if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+
+  try {
+    const ids = items.map((x) => x.productId);
+    const products = await Product.find({ _id: { $in: ids }, isActive: true });
+    if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
+    // Stock re-check
+    for (const it of items) {
+      const p = products.find(x => x._id.toString() === it.productId);
+      if (!p) return res.status(400).json({ error: "product_not_found" });
+      const qty = Number(it.quantity || 0);
+      if (it.variantId) {
+        const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+        if (!v || (v.stock || 0) < qty) return res.status(400).json({ error: "stock_changed" });
+      } else if ((p.stock || 0) < qty) {
+        return res.status(400).json({ error: "stock_changed" });
+      }
+    }
+    const totals = computeTotals(products, items);
+    const orderItems = totals.items.map((it) => {
+      const p = products.find(x => x._id.toString() === it.product.toString());
+      const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
+      return { product: it.product, variantId: it.variantId, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal, image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") };
+    });
+    const doc = await Order.create({
+      customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
+      items: orderItems,
+      totalEstimate: totals.total,
+      status: "CONFIRMED",
+      paymentMethod,
+      paymentStatus: paymentMethod === "COD_20" ? "PARTIAL" : "PAID",
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
+      razorpaySignature: razorpay_signature,
+      notes: notes || "",
+      codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
+      codDueAmount: paymentMethod === "COD_20" ? Number((totals.total * 0.8).toFixed(2)) : 0
+    });
+    // Billing only for full online payments
+    if (paymentMethod === "RAZORPAY") {
+      try {
+        await createBillFromData({
+          customerData: { phone: doc.customer.phone, name: doc.customer.name, email: doc.customer.email },
+          items: doc.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+          paymentType: "RAZORPAY",
+          existingOrderId: doc._id
+        });
+      } catch {}
+    }
+    try {
+      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+      const paidText = paymentMethod === "COD_20"
+        ? `Advance Paid: ₹${Number(doc.totalEstimate * 0.2).toLocaleString("en-IN")}`
+        : `Amount Paid: ₹${Number(doc.totalEstimate).toLocaleString("en-IN")}`;
+      const html = renderMail({
+        heading: "Payment Confirmed",
+        subheading: "We’ve confirmed your payment and are preparing your shipment.",
+        highlight: `Order ID: ${doc._id}`,
+        blocks: [
+          { label: "Payment Method", value: doc.paymentMethod },
+          { label: "Payment", value: paidText },
+          { label: "Current Status", value: doc.status }
+        ]
+      });
+      if (to) await sendEmail({ to, subject: `Payment confirmed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+    } catch {}
+    // Attempt shipment creation (non-blocking)
+    try { await tryCreateDelhiveryShipment(doc); } catch {}
+    return res.json({ success: true, orderId: doc._id });
+  } catch (e) {
+    return res.status(500).json({ error: "order_create_failed" });
+  }
+});
+
 // Verify Razorpay Payment
 router.post("/verify-payment", async (req, res) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body || {};
@@ -358,6 +467,112 @@ router.post("/verify-payment", async (req, res) => {
   } else {
     res.status(400).json({ error: "invalid_signature" });
   }
+});
+
+// Manual Payment Submission (UPI/Bank) - create order pending approval
+router.post("/manual-submit", auth, requireRole("customer"), async (req, res) => {
+  const { items, amountPaid, utr, note, codAdvance20 } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc");
+  if (!cust) return res.status(404).json({ error: "customer_not_found" });
+  if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+  try {
+    const ids = items.map((x) => x.productId);
+    const products = await Product.find({ _id: { $in: ids }, isActive: true });
+    if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
+    const totals = computeTotals(products, items);
+    const orderItems = totals.items.map((it) => {
+      const p = products.find(x => x._id.toString() === it.product.toString());
+      const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
+      return { product: it.product, variantId: it.variantId, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal, image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") };
+    });
+    const doc = await Order.create({
+      customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
+      items: orderItems,
+      totalEstimate: totals.total,
+      status: "PENDING_ADMIN_APPROVAL",
+      paymentMethod: codAdvance20 ? "COD_20" : "MANUAL",
+      paymentStatus: "PAYMENT_SUBMITTED",
+      notes: note || "",
+      manualPayment: { amountPaid: Number(amountPaid || 0), utr: String(utr || ""), note: String(note || "") },
+      codAdvancePercent: codAdvance20 ? 20 : 0,
+      codDueAmount: codAdvance20 ? Number((totals.total * 0.8).toFixed(2)) : 0
+    });
+    try {
+      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+      const html = renderMail({
+        heading: codAdvance20 ? "COD Advance Submitted" : "Payment Submitted",
+        subheading: codAdvance20 ? "We have received your 20% COD advance. Our team will verify shortly." : "We have received your payment details. Our team will verify shortly.",
+        highlight: `Order ID: ${doc._id}`,
+        blocks: [
+          { label: "Payment Method", value: codAdvance20 ? "COD (20% via Manual UPI/Bank)" : "Manual (UPI/Bank)" },
+          { label: "Amount Submitted", value: `₹${Number(amountPaid || 0).toLocaleString("en-IN")}` },
+          { label: "UTR", value: String(utr || "-") },
+          { label: "Status", value: "Pending Admin Approval" }
+        ]
+      });
+      if (to) await sendEmail({ to, subject: `Payment submitted - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+    } catch {}
+    return res.json({ success: true, orderId: doc._id });
+  } catch {
+    return res.status(500).json({ error: "manual_submit_failed" });
+  }
+});
+
+// Admin approve manual payment
+router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  if (order.paymentMethod === "MANUAL") {
+    order.paymentStatus = "PAID";
+    order.status = "CONFIRMED";
+  } else if (order.paymentMethod === "COD_20") {
+    order.paymentStatus = "PARTIAL";
+    order.status = "CONFIRMED";
+  } else {
+    return res.status(400).json({ error: "not_manual_order" });
+  }
+  await order.save();
+  try {
+    const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    const html = renderMail({
+      heading: order.paymentMethod === "COD_20" ? "COD Advance Approved" : "Payment Approved",
+      subheading: order.paymentMethod === "COD_20" ? "Your 20% COD advance has been verified. We are confirming your order." : "Your payment has been verified. We are confirming your order.",
+      highlight: `Order ID: ${order._id}`,
+      blocks: [
+        { label: "Payment Method", value: order.paymentMethod === "COD_20" ? "COD (20% via Manual UPI/Bank)" : "Manual (UPI/Bank)" },
+        { label: "Current Status", value: "CONFIRMED" }
+      ]
+    });
+    if (to) await sendEmail({ to, subject: `Payment approved - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+  } catch {}
+  return res.json({ success: true });
+});
+
+// Admin reject manual payment
+router.patch("/:id/reject-manual", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+  if (order.paymentMethod !== "MANUAL") return res.status(400).json({ error: "not_manual_order" });
+  order.paymentStatus = "FAILED";
+  order.status = "CANCELLED";
+  await order.save();
+  try {
+    const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    const html = renderMail({
+      heading: "Payment Rejected",
+      subheading: "We could not verify your payment. Please contact support or resubmit.",
+      highlight: `Order ID: ${order._id}`,
+      blocks: [
+        { label: "Payment Method", value: "Manual (UPI/Bank)" },
+        { label: "Current Status", value: "CANCELLED" }
+      ]
+    });
+    if (to) await sendEmail({ to, subject: `Payment rejected - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+  } catch {}
+  return res.json({ success: true });
 });
 
 // Finalize COD and generate bill (admin)
