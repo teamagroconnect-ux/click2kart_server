@@ -15,17 +15,15 @@ export const computeTotals = (products, items) => {
     const variant = it.variantId ? (p.variants || []).find(v => v._id.toString() === it.variantId) : null;
     let effectivePrice = variant?.price ?? p.price;
     // Bulk pricing: prefer highest applicable tier
-    if (!variant) {
-      if (Array.isArray(p.bulkTiers) && p.bulkTiers.length) {
-        const tiers = p.bulkTiers.slice().sort((a,b) => a.quantity - b.quantity);
-        const applicable = tiers.filter(t => qty >= Number(t.quantity || 0)).pop();
-        if (applicable) {
-          const off = Number(applicable.priceReduction || 0);
-          effectivePrice = Math.max(0, Number(p.price) - off);
-        }
-      } else if (p.bulkDiscountQuantity > 0 && qty >= p.bulkDiscountQuantity) {
-        effectivePrice = Math.max(0, p.price - (p.bulkDiscountPriceReduction || 0));
+    if (Array.isArray(p.bulkTiers) && p.bulkTiers.length) {
+      const tiers = p.bulkTiers.slice().sort((a,b) => a.quantity - b.quantity);
+      const applicable = tiers.filter(t => qty >= Number(t.quantity || 0)).pop();
+      if (applicable) {
+        const off = Number(applicable.priceReduction || 0);
+        effectivePrice = Math.max(0, (variant?.price ?? p.price) - off);
       }
+    } else if (p.bulkDiscountQuantity > 0 && qty >= p.bulkDiscountQuantity) {
+      effectivePrice = Math.max(0, (variant?.price ?? p.price) - (p.bulkDiscountPriceReduction || 0));
     }
 
     const lineSubtotal = effectivePrice * qty;

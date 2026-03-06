@@ -8,12 +8,16 @@ const router = express.Router();
 
 const serializeCart = async (cart) => {
   if (!cart) return { items: [] };
-  await cart.populate("items.product", "name price images stock variants minOrderQty");
+  await cart.populate("items.product", "name price images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp");
   return {
     items: cart.items.map((it) => {
       const base = {
         productId: it.product._id.toString(),
-        quantity: it.quantity
+        quantity: it.quantity,
+        bulkDiscountQuantity: it.product.bulkDiscountQuantity || 0,
+        bulkDiscountPriceReduction: it.product.bulkDiscountPriceReduction || 0,
+        bulkTiers: it.product.bulkTiers || [],
+        mrp: it.product.mrp || it.product.price
       };
       if (it.variantId) {
         const v = (it.product.variants || []).find(v => v._id.toString() === it.variantId);
