@@ -83,21 +83,14 @@ const tryCreateDelhiveryShipment = async (order) => {
       pin: addr.pincode,
       order: order._id.toString(),
       payment_mode: paymentMode === "COD" ? "COD" : "Prepaid",
-      products_desc: cleanDesc.slice(0, 50), // Even shorter for safety
-      cod_amount: String(Number(codAmount).toFixed(2)), // String "0.00"
-      total_amount: String(Number(order.totalEstimate || 0).toFixed(2)), // String "4500.00"
-      weight: String(Number(dims.weight || 1).toFixed(1)), // KG as String "1.0"
+      products_desc: cleanDesc.slice(0, 50),
+      cod_amount: Number(codAmount), // Number, not string
+      total_amount: Math.round(order.totalEstimate || 0), // Number, not string
+      weight: Number(dims.weight || 1), // Number, not string
       length: Number(dims.length || 10),
       breadth: Number(dims.breadth || 10),
       height: Number(dims.height || 10)
     };
-
-    // B2B fields: Only if valid
-    const gst = (process.env.COMPANY_GST || "").trim();
-    if (gst.length === 15) shipment.seller_gst_tin = gst;
-    
-    const hsn = (process.env.DELHIVERY_DEFAULT_HSN || "").trim();
-    if (hsn) shipment.hsn_code = hsn;
 
     const finalPayload = {
       pickup_location: pickup,
