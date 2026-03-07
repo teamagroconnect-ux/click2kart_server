@@ -81,6 +81,7 @@ const tryCreateDelhiveryShipment = async (order) => {
       .slice(0, 50);
 
     const shipment = {
+      pickup_location: PICKUP_LOCATION,
       name: String(order.customer.name),
       add: String(addr.line1),
       city: String(addr.city),
@@ -100,7 +101,6 @@ const tryCreateDelhiveryShipment = async (order) => {
     };
 
     const finalPayload = {
-      pickup_location: PICKUP_LOCATION,
       shipments: [shipment]
     };
 
