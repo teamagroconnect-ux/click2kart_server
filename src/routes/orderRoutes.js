@@ -68,10 +68,8 @@ const tryCreateDelhiveryShipment = async (order) => {
     const cleanPhone = String(order.customer.phone || "").replace(/\D/g, "").slice(-10);
 
     const shipment = {
-      // Omit waybill to let Delhivery auto-generate it
       name: order.customer.name,
       add: addr.line1,
-      address2: addr.line2 || addr.line1,
       city: addr.city,
       state: addr.state,
       country: "India",
@@ -79,9 +77,9 @@ const tryCreateDelhiveryShipment = async (order) => {
       pin: addr.pincode,
       order: order._id.toString(),
       payment_mode: paymentMode,
-      products_desc: (order.items || []).map(i => i.name).join(", ").slice(0, 200),
-      cod_amount: String(codAmount),
-      total_amount: String(Math.round(order.totalEstimate || 0)),
+      products_desc: (order.items || []).map(i => i.name).join(", ").slice(0, 100), // Shorter description
+      cod_amount: Number(codAmount), // Send as number
+      total_amount: Number(Math.round(order.totalEstimate || 0)), // Send as number
       ...dims
     };
 
@@ -92,7 +90,6 @@ const tryCreateDelhiveryShipment = async (order) => {
     const hsn = (process.env.DELHIVERY_DEFAULT_HSN || "").trim();
     if (hsn) shipment.hsn_code = hsn;
 
-    // Delhivery Express CMU API expects the pickup_location at the root as a string usually
     const finalPayload = {
       pickup_location: pickup,
       shipments: [shipment]
@@ -100,17 +97,16 @@ const tryCreateDelhiveryShipment = async (order) => {
 
     console.log("Creating Delhivery Shipment (Auto-Waybill):", JSON.stringify(finalPayload));
 
-    // Fix: Delhivery API expects application/x-www-form-urlencoded with format=json&data=<json>
-    const bodyParams = new URLSearchParams();
-    bodyParams.append("format", "json");
-    bodyParams.append("data", JSON.stringify(finalPayload));
+    // Fix: Using manual body string to avoid URLSearchParams issues with Delhivery's Python backend
+    const bodyStr = `format=json&data=${encodeURIComponent(JSON.stringify(finalPayload))}`;
 
     const resp = await fetch(`${base}/api/cmu/create.json`, {
       method: "POST",
       headers: { 
-        "Authorization": `Token ${token}` 
+        "Authorization": `Token ${token}`,
+        "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: bodyParams
+      body: bodyStr
     });
     
     const data = await resp.json();
