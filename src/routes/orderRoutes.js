@@ -64,14 +64,19 @@ const tryCreateDelhiveryShipment = async (order) => {
     
     const dims = getDims();
     
-    // Clean phone number (10 digits only)
-    const cleanPhone = String(order.customer.phone || "").replace(/\D/g, "").slice(-10);
+    // Clean phone number: Add 91 prefix for India (mandatory for some Delhivery APIs)
+    const rawPhone = String(order.customer.phone || "").replace(/\D/g, "");
+    const cleanPhone = rawPhone.length === 10 ? "91" + rawPhone : rawPhone;
 
-    // Clean description: Remove non-ASCII/special characters that break Delhivery's JSON parser
-    const cleanDesc = (order.items || []).map(i => i.name).join(", ")
-      .replace(/[^\x00-\x7F]/g, "") // Remove non-ASCII
+    // Clean description: Remove non-ASCII/special characters and extra spaces
+    const cleanDesc = (order.items || [])
+      .map(i => i.name)
+      .join(", ")
+      .replace(/[^\x00-\x7F]/g, " ") // Replace non-ASCII with space
       .replace(/["']/g, "") // Remove quotes
-      .slice(0, 100);
+      .replace(/\s+/g, " ") // Replace multiple spaces with single space
+      .trim()
+      .slice(0, 50);
 
     const shipment = {
       name: order.customer.name,
@@ -83,10 +88,10 @@ const tryCreateDelhiveryShipment = async (order) => {
       pin: addr.pincode,
       order: order._id.toString(),
       payment_mode: paymentMode === "COD" ? "COD" : "Prepaid",
-      products_desc: cleanDesc.slice(0, 50),
-      cod_amount: Number(codAmount), // Number, not string
-      total_amount: Math.round(order.totalEstimate || 0), // Number, not string
-      weight: Number(dims.weight || 1), // Number, not string
+      products_desc: cleanDesc,
+      cod_amount: Number(codAmount),
+      total_amount: Math.round(order.totalEstimate || 0),
+      weight: Number(dims.weight || 1),
       length: Number(dims.length || 10),
       breadth: Number(dims.breadth || 10),
       height: Number(dims.height || 10)
@@ -101,6 +106,7 @@ const tryCreateDelhiveryShipment = async (order) => {
 
     // Correct Request: Manual body string concatenation with encodeURIComponent
     const bodyStr = "format=json&data=" + encodeURIComponent(JSON.stringify(finalPayload));
+    console.log("FINAL BODY SENT TO DELHIVERY:", bodyStr);
 
     const resp = await fetch(`${base}/api/cmu/create.json`, {
       method: "POST",
