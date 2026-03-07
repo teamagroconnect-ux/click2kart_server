@@ -80,8 +80,7 @@ const tryCreateDelhiveryShipment = async (order) => {
       .trim()
       .slice(0, 50);
 
-    const finalPayload = {
-      pickup_location: PICKUP_LOCATION,
+    const shipment = {
       name: String(order.customer.name),
       add: String(addr.line1),
       city: String(addr.city),
@@ -100,7 +99,12 @@ const tryCreateDelhiveryShipment = async (order) => {
       height: Number(dims.height || 10)
     };
 
-    console.log("FINAL PAYLOAD (FLAT):", JSON.stringify(finalPayload));
+    const finalPayload = {
+      pickup_location: PICKUP_LOCATION,
+      shipments: [shipment]
+    };
+
+    console.log("FINAL PAYLOAD (ARRAY):", JSON.stringify(finalPayload));
 
     // Correct Request: Manual body string concatenation with encodeURIComponent using axios
     const bodyStr = "format=json&data=" + encodeURIComponent(JSON.stringify(finalPayload));
