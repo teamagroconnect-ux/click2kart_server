@@ -82,17 +82,17 @@ const tryCreateDelhiveryShipment = async (order) => {
       phone: cleanPhone,
       pin: addr.pincode,
       order: order._id.toString(),
-      payment_mode: paymentMode === "COD" ? "Collect" : "Prepaid",
-      products_desc: cleanDesc,
-      cod_amount: Number(codAmount),
-      total_amount: Number(Math.round(order.totalEstimate || 0)),
-      weight: Math.max(500, (dims.weight || 1) * 1000), // Convert to grams (min 500g)
-      length: dims.length || 10,
-      breadth: dims.breadth || 10,
-      height: dims.height || 10
+      payment_mode: paymentMode === "COD" ? "COD" : "Prepaid",
+      products_desc: cleanDesc.slice(0, 50), // Even shorter for safety
+      cod_amount: String(Number(codAmount).toFixed(2)), // String "0.00"
+      total_amount: String(Number(order.totalEstimate || 0).toFixed(2)), // String "4500.00"
+      weight: String(Number(dims.weight || 1).toFixed(1)), // KG as String "1.0"
+      length: Number(dims.length || 10),
+      breadth: Number(dims.breadth || 10),
+      height: Number(dims.height || 10)
     };
 
-    // B2B fields: Add only if they look valid to avoid 'str' object error in Delhivery
+    // B2B fields: Only if valid
     const gst = (process.env.COMPANY_GST || "").trim();
     if (gst.length === 15) shipment.seller_gst_tin = gst;
     
@@ -106,16 +106,17 @@ const tryCreateDelhiveryShipment = async (order) => {
 
     console.log("Creating Delhivery Shipment (Auto-Waybill):", JSON.stringify(finalPayload));
 
-    // Fix: Using manual body string to avoid URLSearchParams issues with Delhivery's Python backend
-    const bodyStr = `format=json&data=${encodeURIComponent(JSON.stringify(finalPayload))}`;
+    // Fix: Using URLSearchParams for stable encoding
+    const bodyParams = new URLSearchParams();
+    bodyParams.append("format", "json");
+    bodyParams.append("data", JSON.stringify(finalPayload));
 
     const resp = await fetch(`${base}/api/cmu/create.json`, {
       method: "POST",
       headers: { 
-        "Authorization": `Token ${token}`,
-        "Content-Type": "application/x-www-form-urlencoded"
+        "Authorization": `Token ${token}`
       },
-      body: bodyStr
+      body: bodyParams
     });
     
     const data = await resp.json();
