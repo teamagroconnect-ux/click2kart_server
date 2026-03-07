@@ -94,7 +94,8 @@ const tryCreateDelhiveryShipment = async (order) => {
       weight: Number(dims.weight || 1),
       length: Number(dims.length || 10),
       breadth: Number(dims.breadth || 10),
-      height: Number(dims.height || 10)
+      height: Number(dims.height || 10),
+      origin: process.env.ORIGIN_PIN || "" // Required for many Delhivery accounts
     };
 
     const finalPayload = {
