@@ -80,7 +80,8 @@ const tryCreateDelhiveryShipment = async (order) => {
       .trim()
       .slice(0, 50);
 
-    const shipment = {
+    const finalPayload = {
+      pickup_location: PICKUP_LOCATION,
       name: String(order.customer.name),
       add: String(addr.line1),
       city: String(addr.city),
@@ -89,28 +90,23 @@ const tryCreateDelhiveryShipment = async (order) => {
       phone: String(cleanPhone),
       pin: String(addr.pincode),
       order: String(order._id.toString()),
-      payment_mode: paymentMode, // Prepaid or COD
+      payment_mode: paymentMode,
       products_desc: cleanDesc,
-      cod_amount: Number(codAmount), 
-      total_amount: Number(Math.round(order.totalEstimate || 0)), 
-      weight: Number(dims.weight || 1), 
+      cod_amount: Number(codAmount),
+      total_amount: Number(Math.round(order.totalEstimate || 0)),
+      weight: Number(dims.weight || 1),
       length: Number(dims.length || 10),
       breadth: Number(dims.breadth || 10),
       height: Number(dims.height || 10)
     };
 
-    const finalPayload = {
-      pickup_location: PICKUP_LOCATION,
-      shipments: [shipment]
-    };
-
-    console.log("FINAL PAYLOAD:", JSON.stringify(finalPayload));
+    console.log("FINAL PAYLOAD (FLAT):", JSON.stringify(finalPayload));
 
     // Correct Request: Manual body string concatenation with encodeURIComponent using axios
     const bodyStr = "format=json&data=" + encodeURIComponent(JSON.stringify(finalPayload));
     console.log("FINAL BODY SENT TO DELHIVERY:", bodyStr);
 
-    const { data } = await axios.post(`${base}/api/cmu/create`, bodyStr, {
+    const { data } = await axios.post(`${base}/api/cmu/create.json`, bodyStr, {
       headers: { 
         "Authorization": `Token ${token}`,
         "Content-Type": "application/x-www-form-urlencoded"
