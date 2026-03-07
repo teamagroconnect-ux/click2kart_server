@@ -92,10 +92,14 @@ const tryCreateDelhiveryShipment = async (order) => {
 
     console.log("Creating Delhivery Shipment (Auto-Waybill):", JSON.stringify(finalPayload));
 
+    // Fix: Delhivery API expects application/x-www-form-urlencoded with format=json&data=<json>
     const resp = await fetch(`${base}/api/cmu/create.json`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Token ${token}` },
-      body: JSON.stringify(finalPayload)
+      headers: { 
+        "Content-Type": "application/x-www-form-urlencoded", 
+        "Authorization": `Token ${token}` 
+      },
+      body: `format=json&data=${encodeURIComponent(JSON.stringify(finalPayload))}`
     });
     
     const data = await resp.json();
