@@ -101,13 +101,16 @@ const tryCreateDelhiveryShipment = async (order) => {
     console.log("Creating Delhivery Shipment (Auto-Waybill):", JSON.stringify(finalPayload));
 
     // Fix: Delhivery API expects application/x-www-form-urlencoded with format=json&data=<json>
+    const bodyParams = new URLSearchParams();
+    bodyParams.append("format", "json");
+    bodyParams.append("data", JSON.stringify(finalPayload));
+
     const resp = await fetch(`${base}/api/cmu/create.json`, {
       method: "POST",
       headers: { 
-        "Content-Type": "application/x-www-form-urlencoded", 
         "Authorization": `Token ${token}` 
       },
-      body: `format=json&data=${encodeURIComponent(JSON.stringify(finalPayload))}`
+      body: bodyParams
     });
     
     const data = await resp.json();
@@ -170,32 +173,6 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
-
-  // Serviceability guard if Delhivery configured
-  try {
-    const token = getDelhiveryToken();
-    const base = getDelhiveryBase();
-    const ltl = process.env.DELHIVERY_LTL_BASE_URL && process.env.DELHIVERY_LTL_BASE_URL.replace(/\/+$/, "");
-    const pin = String(cust?.kyc?.pincode || "").trim();
-    if (token && pin && (ltl || base)) {
-      let delivery = true, cod = true;
-      if (ltl) {
-        const resp = await fetch(`${ltl}/pincode-service/${encodeURIComponent(pin)}`, { headers: { Authorization: `Token ${token}` } });
-        const data = await resp.json();
-        const svc = data?.data || data || {};
-        delivery = !!(svc.serviceable ?? svc.is_serviceable ?? svc.delivery ?? svc.pre_paid);
-        cod = !!(svc.cod ?? svc.cod_serviceable ?? svc.cash);
-      } else if (base) {
-        const resp = await fetch(`${base}/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pin)}`, { headers: { Authorization: `Token ${token}` } });
-        const data = await resp.json();
-        const entry = Array.isArray(data) ? data.find((x) => String(x.pin) === pin) : (data?.delivery_codes?.[0] || null);
-        delivery = !!(entry?.is_oda === false || entry?.pre_paid || entry?.delivery || entry?.serviceable);
-        cod = !!(entry?.cod || entry?.cash || entry?.cod_serviceable);
-      }
-      if (!delivery) return res.status(400).json({ error: "service_unavailable" });
-      if (paymentMethod === "COD_20" && !cod) return res.status(400).json({ error: "cod_unavailable" });
-    }
-  } catch {}
 
   const ids = items.map((x) => x.productId);
   const products = await Product.find({ _id: { $in: ids }, isActive: true });
