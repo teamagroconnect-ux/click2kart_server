@@ -99,17 +99,16 @@ const tryCreateDelhiveryShipment = async (order) => {
 
     console.log("Creating Delhivery Shipment (Auto-Waybill):", JSON.stringify(finalPayload));
 
-    // Fix: Using URLSearchParams for stable encoding
-    const bodyParams = new URLSearchParams();
-    bodyParams.append("format", "json");
-    bodyParams.append("data", JSON.stringify(finalPayload));
+    // Correct Request: Manual body string concatenation with encodeURIComponent
+    const bodyStr = "format=json&data=" + encodeURIComponent(JSON.stringify(finalPayload));
 
     const resp = await fetch(`${base}/api/cmu/create.json`, {
       method: "POST",
       headers: { 
-        "Authorization": `Token ${token}`
+        "Authorization": `Token ${token}`,
+        "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: bodyParams
+      body: bodyStr
     });
     
     const data = await resp.json();
