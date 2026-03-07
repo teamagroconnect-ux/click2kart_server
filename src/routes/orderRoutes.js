@@ -67,6 +67,12 @@ const tryCreateDelhiveryShipment = async (order) => {
     // Clean phone number (10 digits only)
     const cleanPhone = String(order.customer.phone || "").replace(/\D/g, "").slice(-10);
 
+    // Clean description: Remove non-ASCII/special characters that break Delhivery's JSON parser
+    const cleanDesc = (order.items || []).map(i => i.name).join(", ")
+      .replace(/[^\x00-\x7F]/g, "") // Remove non-ASCII
+      .replace(/["']/g, "") // Remove quotes
+      .slice(0, 100);
+
     const shipment = {
       name: order.customer.name,
       add: addr.line1,
@@ -76,11 +82,14 @@ const tryCreateDelhiveryShipment = async (order) => {
       phone: cleanPhone,
       pin: addr.pincode,
       order: order._id.toString(),
-      payment_mode: paymentMode,
-      products_desc: (order.items || []).map(i => i.name).join(", ").slice(0, 100), // Shorter description
-      cod_amount: Number(codAmount), // Send as number
-      total_amount: Number(Math.round(order.totalEstimate || 0)), // Send as number
-      ...dims
+      payment_mode: paymentMode === "COD" ? "Collect" : "Prepaid",
+      products_desc: cleanDesc,
+      cod_amount: Number(codAmount),
+      total_amount: Number(Math.round(order.totalEstimate || 0)),
+      weight: Math.max(500, (dims.weight || 1) * 1000), // Convert to grams (min 500g)
+      length: dims.length || 10,
+      breadth: dims.breadth || 10,
+      height: dims.height || 10
     };
 
     // B2B fields: Add only if they look valid to avoid 'str' object error in Delhivery
