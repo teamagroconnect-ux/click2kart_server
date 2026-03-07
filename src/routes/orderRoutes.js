@@ -110,7 +110,7 @@ const tryCreateDelhiveryShipment = async (order) => {
     const bodyStr = "format=json&data=" + encodeURIComponent(JSON.stringify(finalPayload));
     console.log("FINAL BODY SENT TO DELHIVERY:", bodyStr);
 
-    const { data } = await axios.post(`${base}/api/cmu/create.json`, bodyStr, {
+    const { data } = await axios.post(`${base}/api/cmu/create`, bodyStr, {
       headers: { 
         "Authorization": `Token ${token}`,
         "Content-Type": "application/x-www-form-urlencoded"
