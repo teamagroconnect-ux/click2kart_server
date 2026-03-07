@@ -35,13 +35,9 @@ const tryCreateDelhiveryShipment = async (order) => {
     const base = getDelhiveryBase();
     if (!token || !base) throw new Error("Delhivery not configured");
 
-    const ORIGIN_PIN = String(process.env.ORIGIN_PIN || "").trim();
     const PICKUP_LOCATION = String(process.env.DELHIVERY_PICKUP_LOCATION || "").trim();
-
-    if (!ORIGIN_PIN) throw new Error("ORIGIN_PIN is not configured in environment");
     if (!PICKUP_LOCATION) throw new Error("DELHIVERY_PICKUP_LOCATION is not configured in environment");
 
-    console.log("DEBUG ORIGIN PIN:", ORIGIN_PIN);
     console.log("DEBUG PICKUP LOCATION:", PICKUP_LOCATION);
 
     // Address extraction: Priority 1: order.shippingAddress, Priority 2: Customer.kyc
@@ -92,7 +88,6 @@ const tryCreateDelhiveryShipment = async (order) => {
       country: "India",
       phone: String(cleanPhone),
       pin: String(addr.pincode),
-      origin: ORIGIN_PIN, // Inject origin into shipment object per latest instruction
       order: String(order._id.toString()),
       payment_mode: paymentMode, // Prepaid or COD
       products_desc: cleanDesc,
