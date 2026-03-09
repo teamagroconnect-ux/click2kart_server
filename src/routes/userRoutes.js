@@ -23,7 +23,7 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
-  const allowed = ["businessName", "gstin", "pan", "addressLine1", "addressLine2", "city", "state", "pincode"];
+  const allowed = ["businessName", "gstin", "pan", "addressLine1", "addressLine2", "city", "district", "state", "pincode"];
   const restricted = ["businessName", "gstin", "pan"];
   
   const kyc = { ...(user.kyc || {}) };
@@ -38,7 +38,7 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
     }
   }
 
-  const requiredFilled = (kyc.businessName && kyc.gstin && kyc.pan && kyc.addressLine1 && kyc.city && kyc.state && kyc.pincode);
+  const requiredFilled = (kyc.businessName && kyc.gstin && kyc.pan && kyc.addressLine1 && kyc.city && kyc.district && kyc.state && kyc.pincode);
   
   user.kyc = kyc;
   user.isKycComplete = !!requiredFilled;

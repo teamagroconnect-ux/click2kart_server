@@ -18,6 +18,7 @@ const customerSchema = new mongoose.Schema(
       addressLine1: { type: String, default: "" },
       addressLine2: { type: String, default: "" },
       city: { type: String, default: "" },
+      district: { type: String, default: "" },
       state: { type: String, default: "" },
       pincode: { type: String, default: "" }
     },
