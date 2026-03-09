@@ -7,10 +7,19 @@ import { sendOTP, sendEmail } from "../lib/mailer.js";
 
 const router = express.Router();
 
+const validateEmailFormat = (email) => {
+  return String(email)
+    .toLowerCase()
+    .match(
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+    );
+};
+
 // ADMIN LOGIN
 router.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing_fields" });
+  if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
   
   const admin = await Admin.findOne({ email: email.toLowerCase().trim(), isActive: true });
   if (!admin) return res.status(401).json({ error: "invalid_credentials" });
@@ -36,6 +45,7 @@ router.post("/login", async (req, res) => {
 router.post("/customer/signup", async (req, res) => {
   const { name, email, phone, password } = req.body || {};
   if (!name || !email || !phone || !password) return res.status(400).json({ error: "missing_fields" });
+  if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
   const exists = await Customer.findOne({ $or: [{ email: email.toLowerCase() }, { phone }] });
   if (exists) return res.status(400).json({ error: "user_already_exists" });
@@ -115,6 +125,7 @@ router.post("/customer/verify-otp", async (req, res) => {
 router.post("/customer/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing_fields" });
+  if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
   const user = await Customer.findOne({ email: email.toLowerCase().trim() });
   if (!user) return res.status(404).json({ error: "user_not_found" });
@@ -139,6 +150,7 @@ router.post("/customer/login", async (req, res) => {
 router.post("/customer/forgot-password", async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: "missing_email" });
+  if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
   const user = await Customer.findOne({ email: email.toLowerCase(), isActive: true });
   if (!user) return res.status(404).json({ error: "user_not_found" });
@@ -189,6 +201,7 @@ router.post("/customer/reset-password", async (req, res) => {
 router.post("/customer/login-otp/send", async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: "missing_email" });
+  if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
   const user = await Customer.findOne({ email: String(email).toLowerCase().trim() });
   if (!user) return res.status(404).json({ error: "user_not_found" });
   if (!user.isActive) return res.status(403).json({ error: "account_pending_approval" });

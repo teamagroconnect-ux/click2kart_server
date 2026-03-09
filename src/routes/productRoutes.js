@@ -43,6 +43,7 @@ const sanitizeProduct = (p, canViewPrice) => {
   delete obj.gst;
   delete obj.mrp;
   delete obj.discountPercent;
+  delete obj.priceTrend;
   delete obj.bulkDiscountQuantity;
   delete obj.bulkDiscountPriceReduction;
   delete obj.bulkTiers;
@@ -188,6 +189,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     weight: Number(weight || 0),
     gst: gst == null ? 0 : Number(gst),
     mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
+    priceTrend: 0, // Default to 0 (down) for new products
     store: store ? String(store).trim() : "",
     section: section ? String(section).trim() : "",
     minOrderQty: Number(minOrderQty || 0),
@@ -281,6 +283,25 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
     const sum = payload.variants.filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
     payload.stock = Number.isFinite(sum) ? sum : 0;
   }
+
+  // Automatic Price Trend calculation
+  if (payload.price != null && beforeDoc) {
+    const newPrice = Number(payload.price);
+    const oldPrice = Number(beforeDoc.price);
+    const mrp = payload.mrp != null ? Number(payload.mrp) : (beforeDoc.mrp ? Number(beforeDoc.mrp) : newPrice);
+    
+    // Safety check: Price should not exceed MRP
+    if (newPrice > mrp) {
+      return res.status(400).json({ error: "price_cannot_exceed_mrp" });
+    }
+
+    if (newPrice > oldPrice) {
+      payload.priceTrend = 1; // UP
+    } else {
+      payload.priceTrend = 0; // DOWN (default/stable)
+    }
+  }
+
   const updated = await Product.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   try {

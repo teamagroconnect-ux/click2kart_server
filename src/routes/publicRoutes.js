@@ -10,6 +10,14 @@ const router = express.Router();
 
 const toUpper = (s) => (s || "").toString().trim().toUpperCase();
 
+const validateEmailFormat = (email) => {
+  return String(email)
+    .toLowerCase()
+    .match(
+      /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+    );
+};
+
 async function computeSummaryForPartner(partner) {
   // Find all coupons linked by partner's email OR name
   const coupons = await Coupon.find({ 
@@ -80,7 +88,7 @@ router.get("/categories", async (req, res) => {
 // Send OTP for Partner Login (via Email)
 router.post("/partner/send-otp", async (req, res) => {
   const email = String(req.body.email || "").toLowerCase().trim();
-  if (!email) return res.status(400).json({ error: "missing_email" });
+  if (!email || !validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
   const partner = await Partner.findOne({ email, isActive: true });
   if (!partner) return res.status(404).json({ error: "partner_not_found" });
