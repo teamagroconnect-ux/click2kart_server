@@ -15,6 +15,7 @@ const productSchema = new mongoose.Schema(
     subcategory: { type: String, index: true },
     images: { type: [imageSchema], default: [] },
     stock: { type: Number, required: true, min: 0 },
+    weight: { type: Number, default: 0, min: 0 }, // weight in grams
     gst: { type: Number, default: 0, min: 0 },
     mrp: { type: Number, min: 0 },
     brand: { type: String, index: true },

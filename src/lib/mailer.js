@@ -41,43 +41,41 @@ export const sendEmail = async ({ to, subject, text, html }) => {
 export const renderMail = ({ heading, subheading, blocks, highlight, items, totals }) => {
   const company = process.env.COMPANY_NAME || "Click2Kart";
   const year = new Date().getFullYear();
-  const h = highlight ? `<div style="margin:12px 0;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;font-weight:700;color:#111827">${highlight}</div>` : "";
+  const h = highlight ? `<div style="margin:24px 0;padding:20px;border:1px solid #e9d5ff;border-radius:16px;background:#f5f3ff;font-weight:800;color:#7c3aed;text-align:center;font-size:18px;letter-spacing:0.02em">${highlight}</div>` : "";
   const b = (blocks || []).map(({ label, value }) => `
-    <div style="display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px dashed #e5e7eb">
-      <div style="font-size:12px;color:#6b7280;font-weight:700;letter-spacing:.08em;text-transform:uppercase">${label}</div>
-      <div style="font-size:14px;color:#111827;font-weight:700;text-align:right">${value}</div>
+    <div style="display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #f1f5f9">
+      <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.1em;text-transform:uppercase">${label}</div>
+      <div style="font-size:14px;color:#1e293b;font-weight:700;text-align:right">${value}</div>
     </div>
   `).join("");
   const irows = Array.isArray(items) && items.length
     ? `
-      <div style="margin-top:14px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
-        <div style="display:flex;background:#f9fafb;border-bottom:1px solid #e5e7eb">
-          <div style="flex:6;padding:10px 12px;font-size:11px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase">Item</div>
-          <div style="flex:2;padding:10px 12px;font-size:11px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase;text-align:right">Qty</div>
-          <div style="flex:3;padding:10px 12px;font-size:11px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase;text-align:right">Unit</div>
-          <div style="flex:3;padding:10px 12px;font-size:11px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase;text-align:right">Total</div>
+      <div style="margin-top:32px;border:1px solid #f1f5f9;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.02)">
+        <div style="display:flex;background:#f8fafc;border-bottom:1px solid #f1f5f9">
+          <div style="flex:6;padding:14px 16px;font-size:10px;color:#64748b;font-weight:800;letter-spacing:.1em;text-transform:uppercase">Product</div>
+          <div style="flex:2;padding:14px 16px;font-size:10px;color:#64748b;font-weight:800;letter-spacing:.1em;text-transform:uppercase;text-align:right">Qty</div>
+          <div style="flex:4;padding:14px 16px;font-size:10px;color:#64748b;font-weight:800;letter-spacing:.1em;text-transform:uppercase;text-align:right">Total</div>
         </div>
         ${items.map(it => `
-          <div style="display:flex;border-top:1px solid #f1f5f9">
-            <div style="flex:6;padding:10px 12px;font-size:13px;color:#111827;font-weight:600">${it.name}</div>
-            <div style="flex:2;padding:10px 12px;font-size:13px;color:#111827;text-align:right">${it.quantity}</div>
-            <div style="flex:3;padding:10px 12px;font-size:13px;color:#111827;text-align:right">₹${Number(it.price).toLocaleString("en-IN")}</div>
-            <div style="flex:3;padding:10px 12px;font-size:13px;color:#111827;text-align:right">₹${Number(it.lineTotal).toLocaleString("en-IN")}</div>
+          <div style="display:flex;border-top:1px solid #f1f5f9;background:#ffffff">
+            <div style="flex:6;padding:14px 16px;font-size:13px;color:#1e293b;font-weight:600">${it.name}</div>
+            <div style="flex:2;padding:14px 16px;font-size:13px;color:#1e293b;text-align:right;font-weight:700">${it.quantity}</div>
+            <div style="flex:4;padding:14px 16px;font-size:13px;color:#1e293b;text-align:right;font-weight:700">₹${Number(it.lineTotal).toLocaleString("en-IN")}</div>
           </div>
         `).join("")}
         ${totals ? `
-          <div style="border-top:1px solid #e5e7eb;background:#fafafa">
-            <div style="display:flex;justify-content:flex-end;padding:10px 12px;gap:24px">
-              <div style="font-size:12px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase">Subtotal</div>
-              <div style="font-size:14px;color:#111827;font-weight:800">₹${Number(totals.subtotal || 0).toLocaleString("en-IN")}</div>
+          <div style="border-top:2px solid #f1f5f9;background:#fcfcfd;padding:16px">
+            <div style="display:flex;justify-content:flex-end;margin-bottom:8px;gap:32px">
+              <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.05em;text-transform:uppercase">Subtotal</div>
+              <div style="font-size:14px;color:#475569;font-weight:700">₹${Number(totals.subtotal || 0).toLocaleString("en-IN")}</div>
             </div>
-            <div style="display:flex;justify-content:flex-end;padding:6px 12px;gap:24px">
-              <div style="font-size:12px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase">GST</div>
-              <div style="font-size:14px;color:#111827;font-weight:800">₹${Number(totals.gstTotal || 0).toLocaleString("en-IN")}</div>
+            <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:32px">
+              <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.05em;text-transform:uppercase">Tax (GST)</div>
+              <div style="font-size:14px;color:#475569;font-weight:700">₹${Number(totals.gstTotal || 0).toLocaleString("en-IN")}</div>
             </div>
-            <div style="display:flex;justify-content:flex-end;padding:10px 12px;gap:24px">
-              <div style="font-size:12px;color:#6b7280;font-weight:800;letter-spacing:.08em;text-transform:uppercase">Total</div>
-              <div style="font-size:16px;color:#111827;font-weight:900">₹${Number(totals.total || 0).toLocaleString("en-IN")}</div>
+            <div style="display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid #f1f5f9;gap:32px">
+              <div style="font-size:12px;color:#1e293b;font-weight:800;letter-spacing:.05em;text-transform:uppercase">Grand Total</div>
+              <div style="font-size:20px;color:#7c3aed;font-weight:900">₹${Number(totals.total || 0).toLocaleString("en-IN")}</div>
             </div>
           </div>
         ` : ``}
@@ -85,20 +83,21 @@ export const renderMail = ({ heading, subheading, blocks, highlight, items, tota
     `
     : "";
   return `
-    <div style="font-family:ui-sans-serif,system-ui;-webkit-font-smoothing:antialiased;max-width:680px;margin:auto;padding:28px;border:1px solid #e5e7eb;border-radius:20px;background:#ffffff">
-      <div style="text-align:center;margin-bottom:16px">
-        <div style="font-size:11px;letter-spacing:.2em;color:#7c3aed;background:#f5f3ff;border:1px solid #e9d5ff;display:inline-block;padding:6px 12px;border-radius:999px;font-weight:800;text-transform:uppercase">${company}</div>
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;max-width:600px;margin:20px auto;padding:40px;border:1px solid #f1f5f9;border-radius:24px;background:#ffffff;box-shadow:0 20px 40px rgba(0,0,0,0.03)">
+      <div style="text-align:center;margin-bottom:32px">
+        <div style="font-size:12px;letter-spacing:.3em;color:#7c3aed;background:#f5f3ff;border:1px solid #e9d5ff;display:inline-block;padding:8px 20px;border-radius:100px;font-weight:900;text-transform:uppercase">${company}</div>
       </div>
-      <h1 style="margin:0 0 6px;font-size:22px;line-height:1.2;color:#111827">${heading || ""}</h1>
-      <div style="margin:0 0 12px;font-size:13px;color:#6b7280">${subheading || ""}</div>
+      <h1 style="margin:0 0 12px;font-size:28px;line-height:1.1;color:#0f172a;font-weight:900;text-align:center;letter-spacing:-0.02em">${heading || ""}</h1>
+      <div style="margin:0 0 32px;font-size:15px;color:#64748b;text-align:center;line-height:1.6;font-weight:500">${subheading || ""}</div>
       ${h}
-      <div style="margin-top:6px">${b}</div>
+      <div style="margin-top:24px;padding:8px 0">${b}</div>
       ${irows}
-      <div style="margin-top:18px;padding:14px 16px;border:1px solid #eef2ff;background:#f8fafc;border-radius:12px;color:#475569;font-size:12px">
-        This is an automated message from ${company}. For any queries, reply to this email.
+      <div style="margin-top:40px;padding:24px;background:#f8fafc;border-radius:16px;color:#64748b;font-size:13px;line-height:1.6;text-align:center;border:1px solid #f1f5f9">
+        This is a premium automated message from <strong>${company}</strong>. 
+        <br/>If you have any questions, our support team is here to help.
       </div>
-      <div style="margin-top:20px;text-align:center;font-size:11px;color:#9ca3af">
-        © ${year} ${company}. All rights reserved.
+      <div style="margin-top:32px;text-align:center;font-size:12px;color:#cbd5e1;font-weight:600;letter-spacing:0.05em">
+        © ${year} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
       </div>
     </div>
   `;
@@ -108,33 +107,33 @@ export const sendOTP = async (email, otp, purpose = "ACCOUNT_VERIFICATION") => {
   const company = process.env.COMPANY_NAME || "Click2Kart";
   const subject =
     purpose === "FORGOT_PASSWORD"
-      ? `Password Reset OTP - ${company}`
-      : `Verification OTP - ${company}`;
+      ? `Reset Your Password - ${company}`
+      : purpose === "PARTNER_LOGIN"
+      ? `Partner Portal Access OTP - ${company}`
+      : `Email Verification OTP - ${company}`;
+  
   const title =
-    purpose === "FORGOT_PASSWORD"
-      ? "Reset Your Password"
-      : "Verify Your Email";
+    purpose === "FORGOT_PASSWORD" ? "Reset Password" :
+    purpose === "PARTNER_LOGIN" ? "Partner Login" : "Verify Email";
+
   const intro =
-    purpose === "FORGOT_PASSWORD"
-      ? "You requested to reset your password. Use the OTP below to proceed."
-      : "Use the OTP below to verify your email address and complete account setup.";
-  const cta =
-    purpose === "FORGOT_PASSWORD"
-      ? "If you did not request this, you can safely ignore this email."
-      : "If you did not initiate this request, you can ignore this email.";
+    purpose === "FORGOT_PASSWORD" ? "You requested to reset your password. Use the secure code below." :
+    purpose === "PARTNER_LOGIN" ? "Use the one-time password below to access your Partner Dashboard." :
+    "Use the secure code below to verify your email and complete your setup.";
+
   const html = `
-    <div style="font-family: ui-sans-serif, system-ui; max-width: 640px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 14px;">
-      <h2 style="color: #111827; text-align: center; margin: 0 0 8px; font-weight: 800;">${company}</h2>
-      <div style="text-align:center; color:#6b7280; font-size:14px; margin-bottom:12px">${title}</div>
-      <p style="color:#374151; line-height:1.7">${intro}</p>
-      <div style="background: #111827; color:#fff; padding: 18px; text-align: center; font-size: 32px; font-weight: 900; letter-spacing: 6px; border-radius: 12px;">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; max-width:500px; margin:20px auto; padding:40px; border:1px solid #f1f5f9; border-radius:24px; background:#ffffff; box-shadow:0 20px 40px rgba(0,0,0,0.03); text-align:center;">
+      <div style="font-size:12px; letter-spacing:.3em; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; display:inline-block; padding:8px 20px; border-radius:100px; font-weight:900; text-transform:uppercase; margin-bottom:32px;">${company}</div>
+      <h2 style="color:#0f172a; margin:0 0 12px; font-weight:900; font-size:24px; letter-spacing:-0.02em;">${title}</h2>
+      <p style="color:#64748b; line-height:1.6; font-size:15px; margin-bottom:32px; font-weight:500;">${intro}</p>
+      <div style="background:#0f172a; color:#ffffff; padding:24px; text-align:center; font-size:36px; font-weight:900; letter-spacing:8px; border-radius:20px; box-shadow:0 12px 24px rgba(15,23,42,0.2); margin-bottom:32px;">
         ${otp}
       </div>
-      <p style="margin-top: 14px; color:#6b7280">This 4-digit OTP is valid for 10 minutes. Do not share it with anyone.</p>
-      <p style="margin-top: 6px; color:#6b7280">${cta}</p>
-      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-      <p style="font-size: 12px; color: #6b7280; text-align: center;">
-        &copy; ${new Date().getFullYear()} ${company}. All rights reserved.
+      <p style="color:#94a3b8; font-size:13px; font-weight:500; margin-bottom:8px;">Valid for 10 minutes. Do not share this code.</p>
+      <p style="color:#94a3b8; font-size:13px; font-weight:500;">If you didn't request this, please ignore this email.</p>
+      <hr style="border:none; border-top:1px solid #f1f5f9; margin:32px 0;" />
+      <p style="font-size:12px; color:#cbd5e1; font-weight:600; letter-spacing:0.05em;">
+        &copy; ${new Date().getFullYear()} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
       </p>
     </div>
   `;

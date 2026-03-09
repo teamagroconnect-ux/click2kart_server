@@ -40,6 +40,12 @@ router.post("/customer/signup", async (req, res) => {
   const exists = await Customer.findOne({ $or: [{ email: email.toLowerCase() }, { phone }] });
   if (exists) return res.status(400).json({ error: "user_already_exists" });
 
+  // Rate limiting: Check if OTP was sent recently
+  const existing = await OTP.findOne({ email: email.toLowerCase(), purpose: "SIGNUP" });
+  if (existing && (Date.now() - existing.updatedAt.getTime()) < 60 * 1000) {
+    return res.status(429).json({ error: "too_many_requests", retryIn: 60 });
+  }
+
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
@@ -136,6 +142,12 @@ router.post("/customer/forgot-password", async (req, res) => {
 
   const user = await Customer.findOne({ email: email.toLowerCase(), isActive: true });
   if (!user) return res.status(404).json({ error: "user_not_found" });
+
+  // Rate limiting: Check if OTP was sent recently
+  const existing = await OTP.findOne({ email: email.toLowerCase(), purpose: "FORGOT_PASSWORD" });
+  if (existing && (Date.now() - existing.updatedAt.getTime()) < 60 * 1000) {
+    return res.status(429).json({ error: "too_many_requests", retryIn: 60 });
+  }
 
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);

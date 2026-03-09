@@ -157,7 +157,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, subcategory, images, stock, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty, store, section } = req.body || {};
+  const { name, price, category, subcategory, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty, store, section } = req.body || {};
   if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
   let categoryValue = undefined;
   if (category) {
@@ -185,6 +185,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     subcategory: subcategoryValue,
     images: imgArr,
     stock: Number(stock),
+    weight: Number(weight || 0),
     gst: gst == null ? 0 : Number(gst),
     mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
     store: store ? String(store).trim() : "",
@@ -229,7 +230,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "price", "category", "subcategory", "images", "stock", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
+  const allowed = ["name", "description", "highlights", "price", "category", "subcategory", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1 });

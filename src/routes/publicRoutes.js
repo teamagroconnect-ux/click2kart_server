@@ -3,46 +3,72 @@ import Category from "../models/Category.js";
 import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
+import Partner from "../models/Partner.js";
+import { sendOTP } from "../lib/mailer.js";
 
 const router = express.Router();
 
 const toUpper = (s) => (s || "").toString().trim().toUpperCase();
 
-async function computeSummaryForCoupon(coupon) {
-  const code = coupon.code;
-  const bills = await Bill.find({ couponCode: code });
-  const totalSales = bills.reduce((sum, b) => sum + (b.payable || 0), 0);
-  const commissionPercent = Number(coupon.partnerCommissionPercent || 0);
-  const totalCommission = (totalSales * commissionPercent) / 100;
+async function computeSummaryForPartner(partner) {
+  // Find all coupons linked by partner's email OR name
+  const coupons = await Coupon.find({ 
+    $or: [
+      { partnerEmail: partner.email },
+      { partner: partner._id },
+      { partnerName: partner.name }
+    ],
+    isActive: true 
+  });
+  const allCodes = coupons.map(c => c.code);
   
-  const categoryMap = {};
-  for (const b of bills) {
-    const billCommission = (b.payable * commissionPercent) / 100;
-    for (const it of b.items) {
-      const cat = it.category || "General";
-      const itemWeight = it.lineTotal / (b.total || 1);
-      const itemComm = billCommission * itemWeight;
-      categoryMap[cat] = (categoryMap[cat] || 0) + itemComm;
-    }
-  }
-  const categoryBreakdown = Object.entries(categoryMap).map(([name, value]) => ({ name, value }));
+  const bills = await Bill.find({ couponCode: { $in: allCodes } }).sort({ createdAt: -1 });
+  
+  const totalSales = bills.reduce((sum, b) => sum + (b.payable || 0), 0);
+  
+  // Safe bills list for partner (only masked phone and amount)
+  const safeBills = bills.map(b => ({
+    createdAt: b.createdAt,
+    customerPhone: b.customerPhone ? b.customerPhone.slice(0, 2) + "****" + b.customerPhone.slice(-4) : "****",
+    payable: b.payable,
+    couponCode: b.couponCode
+  }));
 
-  const payouts = await PartnerPayout.find({ couponCode: code }).sort({ createdAt: -1 });
+  const payouts = await PartnerPayout.find({ couponCode: { $in: allCodes } }).sort({ createdAt: -1 });
   const totalPaid = payouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  // Aggregated commission calculation
+  let totalCommission = 0;
+  for (const c of coupons) {
+    const couponSales = bills.filter(b => b.couponCode === c.code).reduce((sum, b) => sum + (b.payable || 0), 0);
+    totalCommission += (couponSales * (Number(c.partnerCommissionPercent) || 0)) / 100;
+  }
+
   const balance = totalCommission - totalPaid;
+
+  const couponStats = coupons.map(c => {
+    const couponBills = bills.filter(b => b.couponCode === c.code);
+    const sales = couponBills.reduce((sum, b) => sum + (b.payable || 0), 0);
+    const commission = (sales * (Number(c.partnerCommissionPercent) || 0)) / 100;
+    return {
+      code: c.code,
+      sales,
+      commission,
+      commissionPercent: c.partnerCommissionPercent
+    };
+  });
+
   return {
-    couponId: coupon._id,
-    code,
-    partnerName: coupon.partnerName || "",
-    partnerEmail: coupon.partnerEmail || "",
-    partnerPhone: coupon.partnerPhone || "",
-    commissionPercent,
+    partnerName: partner.name,
+    partnerEmail: partner.email,
+    partnerPhone: partner.phone,
     totalSales,
     totalCommission,
     totalPaid,
     balance,
-    categoryBreakdown,
-    payouts
+    coupons: couponStats,
+    payouts,
+    bills: safeBills
   };
 }
 
@@ -51,45 +77,75 @@ router.get("/categories", async (req, res) => {
   res.json(items);
 });
 
-// Partner Summary Portal (Public)
-router.post("/partner/summary/:code", async (req, res) => {
-  const code = toUpper(req.params.code);
-  const { password } = req.body || {};
-  
-  if (!password) return res.status(400).json({ error: "missing_password" });
+// Send OTP for Partner Login (via Email)
+router.post("/partner/send-otp", async (req, res) => {
+  const email = String(req.body.email || "").toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: "missing_email" });
 
-  const coupon = await Coupon.findOne({ code, isActive: true });
-  if (!coupon) return res.status(404).json({ error: "not_found" });
-  
-  if (coupon.password && coupon.password !== password) {
-    return res.status(401).json({ error: "invalid_password" });
+  const partner = await Partner.findOne({ email, isActive: true });
+  if (!partner) return res.status(404).json({ error: "partner_not_found" });
+
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+  partner.otp = otp;
+  partner.otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+  await partner.save();
+
+  try {
+    await sendOTP(partner.email, otp, "PARTNER_LOGIN");
+    res.json({ sent: true, email: partner.email });
+  } catch (err) {
+    console.error("Failed to send partner OTP:", err);
+    res.status(500).json({ error: "failed_to_send_otp" });
   }
-  if (!coupon.partnerName && !coupon.partnerCommissionPercent) {
-    return res.status(400).json({ error: "no_partner_configured" });
+});
+
+// Partner Login (via Email + Password/OTP)
+router.post("/partner/login", async (req, res) => {
+  const email = String(req.body.email || "").toLowerCase().trim();
+  const { password, otp } = req.body || {};
+  
+  if (!email) return res.status(400).json({ error: "missing_email" });
+  if (!password && !otp) return res.status(400).json({ error: "missing_credentials" });
+
+  const partner = await Partner.findOne({ email, isActive: true });
+  if (!partner) return res.status(404).json({ error: "not_found" });
+  
+  if (password) {
+    if (!partner.password || partner.password !== password) {
+      return res.status(401).json({ error: "invalid_password" });
+    }
+  } else if (otp) {
+    if (!partner.otp || partner.otp !== otp || new Date() > partner.otpExpiry) {
+      return res.status(401).json({ error: "invalid_otp" });
+    }
+    // Clear OTP after use
+    partner.otp = undefined;
+    partner.otpExpiry = undefined;
+    await partner.save();
   }
   
-  const summary = await computeSummaryForCoupon(coupon);
+  const summary = await computeSummaryForPartner(partner);
   const safePayouts = summary.payouts.map((p) => ({
     createdAt: p.createdAt,
     amount: p.amount,
     method: p.method,
     utr: p.utr,
     razorpayPaymentId: p.razorpayPaymentId,
-    notes: p.notes
+    notes: p.notes,
+    couponCode: p.couponCode
   }));
   
   res.json({
-    code: summary.code,
     partnerName: summary.partnerName,
     partnerEmail: summary.partnerEmail,
     partnerPhone: summary.partnerPhone,
-    commissionPercent: summary.commissionPercent,
     totalSales: summary.totalSales,
     totalCommission: summary.totalCommission,
     totalPaid: summary.totalPaid,
     balance: summary.balance,
-    categoryBreakdown: summary.categoryBreakdown,
-    payouts: safePayouts
+    coupons: summary.coupons,
+    payouts: safePayouts,
+    bills: summary.bills
   });
 });
 

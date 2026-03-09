@@ -17,7 +17,9 @@ const couponSchema = new mongoose.Schema(
     partnerCommissionPercent: { type: Number, default: 0 },
     maxTotalSales: { type: Number, default: 0 }, // 0 = unlimited
     totalSales: { type: Number, default: 0 },
-    password: { type: String, trim: true } // Added for partner portal security
+    password: { type: String, trim: true }, // Added for partner portal security
+    otp: { type: String },
+    otpExpiry: { type: Date }
   },
   { timestamps: true }
 );

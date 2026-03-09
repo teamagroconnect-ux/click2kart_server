@@ -65,6 +65,23 @@ const tryCreateDelhiveryShipment = async (order) => {
     const paymentMode = isPrepaid ? "Prepaid" : "COD";
     const codAmount = paymentMode === "COD" ? Math.round(order.codDueAmount || 0) : 0;
     
+    // Fetch products to get weights
+    const productIds = (order.items || []).map(it => it.product);
+    const products = await Product.find({ _id: { $in: productIds } });
+    
+    let totalWeightGrams = 0;
+    let totalQuantity = 0;
+    (order.items || []).forEach(it => {
+      const p = products.find(prod => prod._id.toString() === it.product.toString());
+      if (p && p.weight) {
+        totalWeightGrams += (p.weight * it.quantity);
+      }
+      totalQuantity += it.quantity;
+    });
+
+    // Use totalWeight or 500g (0.5kg)
+    const weightKg = totalWeightGrams > 0 ? (totalWeightGrams / 1000) : 0.5;
+
     const dims = getDims();
     
     // Clean phone number: Just the 10 digits as requested by user
@@ -94,7 +111,8 @@ const tryCreateDelhiveryShipment = async (order) => {
       products_desc: cleanDesc,
       cod_amount: Number(codAmount),
       total_amount: Number(Math.round(order.totalEstimate || 0)),
-      weight: Number(dims.weight || 1),
+      quantity: Number(totalQuantity),
+      weight: Number(weightKg),
       length: Number(dims.length || 10),
       breadth: Number(dims.breadth || 10),
       height: Number(dims.height || 10)
@@ -320,6 +338,11 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature, items, paymentMethod, notes } = req.body || {};
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
+  
+  // Prevent duplicate order creation for the same payment
+  const exists = await Order.findOne({ razorpayPaymentId: razorpay_payment_id });
+  if (exists) return res.status(400).json({ error: "order_already_created" });
+
   const body = razorpay_order_id + "|" + razorpay_payment_id;
   const expectedSignature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(body.toString()).digest("hex");
   if (expectedSignature !== razorpay_signature) return res.status(400).json({ error: "invalid_signature" });
@@ -596,6 +619,12 @@ router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res)
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
+
+  // Prevent duplicate approval
+  if (order.status === "CONFIRMED" || order.paymentStatus === "PAID") {
+    return res.status(400).json({ error: "already_approved" });
+  }
+
   if (order.paymentMethod === "MANUAL") {
     order.paymentStatus = "PAID";
     order.status = "CONFIRMED";
@@ -750,6 +779,12 @@ router.patch("/:id/finalize-cod", auth, requireRole("admin"), async (req, res) =
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
+
+  // Prevent duplicate finalization
+  if (order.paymentStatus === "PAID") {
+    return res.status(400).json({ error: "already_paid" });
+  }
+
   if (order.paymentMethod !== "COD_20") return res.status(400).json({ error: "not_cod_order" });
   if (order.paymentStatus !== "PARTIAL") return res.status(400).json({ error: "advance_not_paid" });
 
@@ -774,6 +809,11 @@ router.patch("/:id/approve-cash", auth, requireRole("admin"), async (req, res) =
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
+
+  // Prevent duplicate approval
+  if (order.status === "CONFIRMED" || order.paymentStatus === "PAID") {
+    return res.status(400).json({ error: "already_approved" });
+  }
   
   // Accept both CASH and COD_20 (for advance verification)
   if (!["CASH", "COD_20"].includes(order.paymentMethod)) {
@@ -916,6 +956,12 @@ router.patch("/:id/ship", auth, requireRole("admin"), async (req, res) => {
   if (!provider || !waybill) return res.status(400).json({ error: "missing_fields" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
+
+  // Prevent duplicate shipping
+  if (order.status === "SHIPPED") {
+    return res.status(400).json({ error: "already_shipped" });
+  }
+
   if (order.status === "CANCELLED") return res.status(400).json({ error: "cancelled_order" });
   order.shipping = order.shipping || {};
   order.shipping.provider = String(provider);

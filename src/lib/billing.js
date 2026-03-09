@@ -8,6 +8,8 @@ import Coupon from "../models/Coupon.js";
 import { computeTotals, generateInvoiceNumber } from "./invoice.js";
 import { sendLowStockEmail } from "./notifications.js";
 
+const lowStockAlertCache = new Set(); // Track product IDs that recently triggered an alert
+
 export const createBillFromData = async ({ customerData, items, paymentType, couponCode, existingOrderId }) => {
   if (!Array.isArray(items) || items.length === 0) throw new Error("no_items");
 
@@ -161,8 +163,25 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   // Stock notification
   try {
     const threshold = Number(process.env.LOW_STOCK_THRESHOLD ?? 5);
-    const lowItems = await Product.find({ _id: { $in: ids }, stock: { $lte: threshold }, isActive: true });
-    if (lowItems.length > 0) await sendLowStockEmail(lowItems, threshold);
+    const lowItems = await Product.find({ 
+      _id: { $in: ids }, 
+      stock: { $lte: threshold }, 
+      isActive: true 
+    });
+    
+    // Filter out items that have been alerted recently (e.g. within the last 1 hour)
+    const itemsToAlert = lowItems.filter(p => !lowStockAlertCache.has(p._id.toString()));
+    
+    if (itemsToAlert.length > 0) {
+      await sendLowStockEmail(itemsToAlert, threshold);
+      // Mark as alerted
+      itemsToAlert.forEach(p => {
+        const id = p._id.toString();
+        lowStockAlertCache.add(id);
+        // Clear from cache after 1 hour
+        setTimeout(() => lowStockAlertCache.delete(id), 60 * 60 * 1000);
+      });
+    }
   } catch (err) { console.error("Notification failed", err); }
 
   return billDoc;
