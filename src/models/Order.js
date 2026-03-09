@@ -24,6 +24,8 @@ const orderSchema = new mongoose.Schema(
     },
     items: { type: [orderItemSchema], required: true },
     totalEstimate: { type: Number, required: true },
+    couponCode: { type: String, default: "" },
+    couponDiscount: { type: Number, default: 0 },
     paymentMethod: { type: String, enum: ["CASH", "RAZORPAY", "MANUAL", "COD_20"], default: "CASH" },
     paymentStatus: { type: String, enum: ["PENDING", "PAYMENT_SUBMITTED", "PARTIAL", "PAID", "FAILED", "REFUNDED"], default: "PENDING" },
     razorpayOrderId: { type: String },

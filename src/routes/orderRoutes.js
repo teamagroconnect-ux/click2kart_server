@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
+import Coupon from "../models/Coupon.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import { computeTotals } from "../lib/invoice.js";
 import razorpay from "../lib/razorpay.js";
@@ -173,12 +174,31 @@ const tryCreateDelhiveryShipment = async (order) => {
   }
 };
 
+const validateAndApplyCoupon = async (code, amount) => {
+  if (!code) return { discount: 0, finalAmount: amount };
+  const c = await Coupon.findOne({ code: code.toUpperCase(), isActive: true });
+  if (!c) return { discount: 0, finalAmount: amount };
+  const now = new Date();
+  if (c.expiryDate && c.expiryDate < now) return { discount: 0, finalAmount: amount };
+  if (c.usageLimit > 0 && c.usedCount >= c.usageLimit) return { discount: 0, finalAmount: amount };
+  if (amount < (c.minAmount || 0)) return { discount: 0, finalAmount: amount };
+
+  let discount = 0;
+  if (c.type === "PERCENT") discount = (amount * c.value) / 100;
+  else if (c.type === "FLAT") discount = c.value;
+  
+  if (discount > amount) discount = amount;
+  discount = Number(discount.toFixed(2));
+  return { discount, finalAmount: Number((amount - discount).toFixed(2)), couponId: c._id };
+};
+
 // Create new order
 router.post("/", auth, requireRole("customer"), async (req, res) => {
   const { 
     items, 
     notes, 
     paymentMethod,
+    couponCode,
     razorpay_order_id,
     razorpay_payment_id,
     razorpay_signature
@@ -217,6 +237,9 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   if (totals.total < minAmount) {
     return res.status(400).json({ error: "min_order_not_met", minAmount });
   }
+
+  const { discount: coupDiscount, finalAmount: payableTotal, couponId } = await validateAndApplyCoupon(couponCode, totals.total);
+
   const orderItems = totals.items.map((it) => {
     const p = products.find(x => x._id.toString() === it.product.toString());
     const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
@@ -236,8 +259,8 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   if (paymentMethod === "RAZORPAY" || paymentMethod === "COD_20") {
     try {
       const amountPaise = paymentMethod === "COD_20"
-        ? Math.round(totals.total * 0.2 * 100)
-        : Math.round(totals.total * 100);
+        ? Math.round(payableTotal * 0.2 * 100)
+        : Math.round(payableTotal * 100);
       razorpayOrder = await razorpay.orders.create({
         amount: amountPaise, // in paise
         currency: "INR",
@@ -261,15 +284,21 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
       pincode: cust.kyc?.pincode || ""
     },
     items: orderItems,
-    totalEstimate: totals.total,
+    totalEstimate: payableTotal,
+    couponCode: couponCode?.toUpperCase() || "",
+    couponDiscount: coupDiscount,
     status: orderStatus,
     paymentMethod,
     paymentStatus: "PENDING",
     razorpayOrderId: razorpayOrder?.id,
     notes: notes || "",
     codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
-    codDueAmount: paymentMethod === "COD_20" ? Number((totals.total * 0.8).toFixed(2)) : 0
+    codDueAmount: paymentMethod === "COD_20" ? Number((payableTotal * 0.8).toFixed(2)) : 0
   });
+
+  if (couponId) {
+    await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
+  }
 
   if (paymentMethod === "CASH") {
     notifyAdmin("new_offline_order", doc);
@@ -305,7 +334,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
 // Prepare Payment (no Order creation) - new flow
 router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) => {
-  const { items, paymentMethod } = req.body || {};
+  const { items, paymentMethod, couponCode } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
   try {
@@ -318,9 +347,12 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
     const totals = computeTotals(products, items);
     const minAmount = Number(process.env.MIN_ORDER_AMOUNT || 5000);
     if (totals.total < minAmount) return res.status(400).json({ error: "min_order_not_met", minAmount });
+
+    const { finalAmount: payableTotal } = await validateAndApplyCoupon(couponCode, totals.total);
+
     const amountPaise = paymentMethod === "COD_20"
-      ? Math.round(totals.total * 0.2 * 100)
-      : Math.round(totals.total * 100);
+      ? Math.round(payableTotal * 0.2 * 100)
+      : Math.round(payableTotal * 100);
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
       return res.status(400).json({ error: "invalid_amount" });
     }
@@ -335,7 +367,7 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
 
 // Create Order after payment verification (new flow)
 router.post("/create-after-verify", auth, requireRole("customer"), async (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, items, paymentMethod, notes } = req.body || {};
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, items, paymentMethod, notes, couponCode } = req.body || {};
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   
@@ -368,6 +400,9 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       }
     }
     const totals = computeTotals(products, items);
+
+    const { discount: coupDiscount, finalAmount: payableTotal, couponId } = await validateAndApplyCoupon(couponCode, totals.total);
+
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
       const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
@@ -383,7 +418,9 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
         pincode: cust.kyc?.pincode || ""
       },
       items: orderItems,
-      totalEstimate: totals.total,
+      totalEstimate: payableTotal,
+      couponCode: couponCode?.toUpperCase() || "",
+      couponDiscount: coupDiscount,
       status: "CONFIRMED", // Razorpay orders are directly confirmed after successful payment
       paymentMethod,
       paymentStatus: paymentMethod === "COD_20" ? "PARTIAL" : "PAID",
@@ -392,8 +429,12 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       razorpaySignature: razorpay_signature,
       notes: notes || "",
       codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
-      codDueAmount: paymentMethod === "COD_20" ? Number((totals.total * 0.8).toFixed(2)) : 0
+      codDueAmount: paymentMethod === "COD_20" ? Number((payableTotal * 0.8).toFixed(2)) : 0
     });
+
+    if (couponId) {
+      await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
+    }
     // Billing only for full online payments
     if (paymentMethod === "RAZORPAY") {
       try {
@@ -551,7 +592,7 @@ router.post("/verify-payment", async (req, res) => {
 
 // Manual Payment Submission (UPI/Bank) - create order pending approval
 router.post("/manual-submit", auth, requireRole("customer"), async (req, res) => {
-  const { items, amountPaid, utr, note, codAdvance20 } = req.body || {};
+  const { items, amountPaid, utr, note, codAdvance20, couponCode } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
@@ -561,6 +602,9 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
     const products = await Product.find({ _id: { $in: ids }, isActive: true });
     if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
+
+    const { discount: coupDiscount, finalAmount: payableTotal, couponId } = await validateAndApplyCoupon(couponCode, totals.total);
+
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
       const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
@@ -576,15 +620,21 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
         pincode: cust.kyc?.pincode || ""
       },
       items: orderItems,
-      totalEstimate: totals.total,
+      totalEstimate: payableTotal,
+      couponCode: couponCode?.toUpperCase() || "",
+      couponDiscount: coupDiscount,
       status: "PENDING_ADMIN_APPROVAL",
       paymentMethod: codAdvance20 ? "COD_20" : "MANUAL",
       paymentStatus: "PAYMENT_SUBMITTED",
       notes: note || "",
       manualPayment: { amountPaid: Number(amountPaid || 0), utr: String(utr || ""), note: String(note || "") },
       codAdvancePercent: codAdvance20 ? 20 : 0,
-      codDueAmount: codAdvance20 ? Number((totals.total * 0.8).toFixed(2)) : 0
+      codDueAmount: codAdvance20 ? Number((payableTotal * 0.8).toFixed(2)) : 0
     });
+
+    if (couponId) {
+      await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
+    }
     
     // Notify admin via WebSocket
     try {
