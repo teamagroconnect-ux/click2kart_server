@@ -202,21 +202,26 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
           .filter(t => Number.isFinite(t.quantity) && t.quantity > 0 && Number.isFinite(t.priceReduction) && t.priceReduction >= 0)
           .sort((a,b) => a.quantity - b.quantity)
       : [],
-    variants: Array.isArray(variants) ? variants.map(v => ({
-      _id: v._id || new mongoose.Types.ObjectId(),
-      attributes: {
-        color: String(v?.attributes?.color || v?.color || ""),
-        ram: String(v?.attributes?.ram || v?.ram || ""),
-        storage: String(v?.attributes?.storage || v?.storage || ""),
-        capacity: String(v?.attributes?.capacity || v?.capacity || "")
-      },
-      price: Number(v?.price ?? price),
-      mrp: v?.mrp == null ? undefined : Number(v?.mrp),
-      stock: Number(v?.stock ?? 0),
-      sku: v?.sku ? String(v.sku).trim() : undefined,
-      isActive: v?.isActive != null ? !!v.isActive : true,
-      images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
-    })) : []
+    attributes: Array.isArray(req.body.attributes) ? req.body.attributes.map(a => String(a || '').trim().toLowerCase()).filter(Boolean) : [],
+    variants: Array.isArray(variants) ? variants.map(v => {
+      const variantAttrs = {};
+      if (v.attributes && typeof v.attributes === 'object') {
+        Object.entries(v.attributes).forEach(([key, val]) => {
+          variantAttrs[key.toLowerCase()] = String(val || '').trim();
+        });
+      }
+      return {
+        _id: v._id || new mongoose.Types.ObjectId(),
+        attributes: variantAttrs,
+        price: Number(v?.price ?? price),
+        mrp: v?.mrp == null ? undefined : Number(v?.mrp),
+        stock: Number(v?.stock ?? 0),
+        sku: v?.sku ? String(v.sku).trim() : undefined,
+        weight: Number(v?.weight ?? weight ?? 0),
+        isActive: v?.isActive != null ? !!v.isActive : true,
+        images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
+      };
+    }) : []
   });
   try {
     if ((doc.variants || []).length > 0) {
@@ -264,22 +269,29 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
       .filter(t => Number.isFinite(t.quantity) && t.quantity > 0 && Number.isFinite(t.priceReduction) && t.priceReduction >= 0)
       .sort((a,b) => a.quantity - b.quantity);
   }
+  if (Array.isArray(payload.attributes)) {
+    payload.attributes = payload.attributes.map(a => String(a || '').trim().toLowerCase()).filter(Boolean);
+  }
   if (Array.isArray(payload.variants)) {
-    payload.variants = payload.variants.map(v => ({
-      _id: v._id || new mongoose.Types.ObjectId(),
-      attributes: {
-        color: String(v?.attributes?.color || v?.color || ""),
-        ram: String(v?.attributes?.ram || v?.ram || ""),
-        storage: String(v?.attributes?.storage || v?.storage || ""),
-        capacity: String(v?.attributes?.capacity || v?.capacity || "")
-      },
-      price: Number(v?.price ?? 0),
-      mrp: v?.mrp == null ? undefined : Number(v?.mrp),
-      stock: Number(v?.stock ?? 0),
-      sku: v?.sku ? String(v.sku).trim() : undefined,
-      isActive: v?.isActive != null ? !!v.isActive : true,
-      images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
-    }));
+    payload.variants = payload.variants.map(v => {
+      const variantAttrs = {};
+      if (v.attributes && typeof v.attributes === 'object') {
+        Object.entries(v.attributes).forEach(([key, val]) => {
+          variantAttrs[key.toLowerCase()] = String(val || '').trim();
+        });
+      }
+      return {
+        _id: v._id || new mongoose.Types.ObjectId(),
+        attributes: variantAttrs,
+        price: Number(v?.price ?? 0),
+        mrp: v?.mrp == null ? undefined : Number(v?.mrp),
+        stock: Number(v?.stock ?? 0),
+        sku: v?.sku ? String(v.sku).trim() : undefined,
+        weight: Number(v?.weight ?? 0),
+        isActive: v?.isActive != null ? !!v.isActive : true,
+        images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
+      };
+    });
     const sum = payload.variants.filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
     payload.stock = Number.isFinite(sum) ? sum : 0;
   }
@@ -339,26 +351,29 @@ router.post("/:id/variants", auth, requireRole("admin"), async (req, res) => {
     const conflict = await Product.findOne({ "variants.sku": sku });
     if (conflict) return res.status(400).json({ error: "sku_exists" });
   }
-  const attrs = {
-    color: String(v?.attributes?.color || v?.color || ""),
-    ram: String(v?.attributes?.ram || v?.ram || ""),
-    storage: String(v?.attributes?.storage || v?.storage || ""),
-    capacity: String(v?.attributes?.capacity || v?.capacity || "")
-  };
-  const duplicate = (p.variants || []).find(x =>
-    (x.attributes?.color || "") === attrs.color &&
-    (x.attributes?.ram || "") === attrs.ram &&
-    (x.attributes?.storage || "") === attrs.storage &&
-    (x.attributes?.capacity || "") === attrs.capacity
-  );
+  const attrs = {};
+  if (v?.attributes && typeof v.attributes === 'object') {
+    Object.entries(v.attributes).forEach(([key, val]) => {
+      attrs[key.toLowerCase()] = String(val || '').trim();
+    });
+  }
+  
+  const duplicate = (p.variants || []).find(x => {
+    const xAttrs = x.attributes instanceof Map ? Object.fromEntries(x.attributes) : (x.attributes || {});
+    const keys = Object.keys(attrs);
+    const xKeys = Object.keys(xAttrs);
+    if (keys.length !== xKeys.length) return false;
+    return keys.every(k => xAttrs[k] === attrs[k]);
+  });
   if (duplicate) return res.status(400).json({ error: "duplicate_variant" });
   const newVar = {
     _id: new mongoose.Types.ObjectId(),
     attributes: attrs,
-    price: Number(v?.price ?? 0),
+    price: Number(v?.price ?? p.price ?? 0),
     mrp: v?.mrp == null ? undefined : Number(v?.mrp),
     stock: Number(v?.stock ?? 0),
     sku,
+    weight: Number(v?.weight ?? p.weight ?? 0),
     isActive: v?.isActive != null ? !!v.isActive : true,
     images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
   };
@@ -387,26 +402,40 @@ router.put("/:id/variants/:vid", auth, requireRole("admin"), async (req, res) =>
     v.sku = sku;
   }
   if (payload.attributes) {
-    const attrs = {
-      color: String(payload?.attributes?.color || v.attributes.color || ""),
-      ram: String(payload?.attributes?.ram || v.attributes.ram || ""),
-      storage: String(payload?.attributes?.storage || v.attributes.storage || ""),
-      capacity: String(payload?.attributes?.capacity || v.attributes.capacity || "")
-    };
-    const duplicate = (p.variants || []).find((x, i) =>
-      i !== idx &&
-      (x.attributes?.color || "") === attrs.color &&
-      (x.attributes?.ram || "") === attrs.ram &&
-      (x.attributes?.storage || "") === attrs.storage &&
-      (x.attributes?.capacity || "") === attrs.capacity
-    );
+    const attrs = {};
+    if (payload.attributes && typeof payload.attributes === 'object') {
+      Object.entries(payload.attributes).forEach(([key, val]) => {
+        attrs[key.toLowerCase()] = String(val || '').trim();
+      });
+    }
+    const duplicate = (p.variants || []).find((x, i) => {
+      if (i === idx) return false;
+      const xAttrs = x.attributes instanceof Map ? Object.fromEntries(x.attributes) : (x.attributes || {});
+      const keys = Object.keys(attrs);
+      const xKeys = Object.keys(xAttrs);
+      if (keys.length !== xKeys.length) return false;
+      return keys.every(k => xAttrs[k] === attrs[k]);
+    });
     if (duplicate) return res.status(400).json({ error: "duplicate_variant" });
     v.attributes = attrs;
   }
+  if (payload.weight != null) v.weight = Number(payload.weight);
   if (payload.price != null) v.price = Number(payload.price);
   if (payload.mrp != null) v.mrp = Number(payload.mrp);
-  if (payload.stock != null) v.stock = Number(payload.stock);
-  if (payload.isActive != null) v.isActive = !!payload.isActive;
+  if (payload.stock != null) {
+    const qty = Number(payload.stock);
+    const before = v.stock;
+    v.stock = qty;
+    // Recalculate total product stock
+    p.stock = (p.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
+    await p.save();
+    await StockTxn.create({ product: p._id, type: "ADJUST", quantity: qty, before, after: qty, variantId: v._id.toString() });
+  }
+  if (payload.isActive != null) {
+    v.isActive = !!payload.isActive;
+    // Recalculate total product stock as active status changed
+    p.stock = (p.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
+  }
   if (Array.isArray(payload.images)) v.images = payload.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url);
   p.markModified("variants");
   await p.save();

@@ -1,4 +1,5 @@
 import express from "express";
+import jwt from "jsonwebtoken";
 import Category from "../models/Category.js";
 import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
@@ -132,6 +133,12 @@ router.post("/partner/login", async (req, res) => {
     await partner.save();
   }
   
+  const token = jwt.sign(
+    { id: partner._id.toString(), role: "partner", email: partner.email },
+    process.env.JWT_SECRET,
+    { expiresIn: "30d" }
+  );
+  
   const summary = await computeSummaryForPartner(partner);
   const safePayouts = summary.payouts.map((p) => ({
     createdAt: p.createdAt,
@@ -144,6 +151,7 @@ router.post("/partner/login", async (req, res) => {
   }));
   
   res.json({
+    token,
     partnerName: summary.partnerName,
     partnerEmail: summary.partnerEmail,
     partnerPhone: summary.partnerPhone,
@@ -155,6 +163,14 @@ router.post("/partner/login", async (req, res) => {
     payouts: safePayouts,
     bills: summary.bills
   });
+});
+
+router.get("/partner/me", (await import("../middleware/auth.js")).auth, async (req, res) => {
+  if (req.user.role !== 'partner') return res.status(403).json({ error: 'forbidden' });
+  const partner = await Partner.findById(req.user.id);
+  if (!partner || !partner.isActive) return res.status(404).json({ error: "not_found" });
+  const summary = await computeSummaryForPartner(partner);
+  res.json(summary);
 });
 
 export default router;

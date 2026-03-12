@@ -79,6 +79,8 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
           const idx = (p.variants || []).findIndex(v => v._id.toString() === String(it.variantId));
           const before = p.variants[idx]?.stock || 0;
           p.variants[idx].stock = before - Number(it.quantity);
+          // Recalculate total product stock
+          p.stock = (p.variants || []).filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
           await p.save({ session });
           await StockTxn.create([
             {

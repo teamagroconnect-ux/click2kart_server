@@ -10,24 +10,43 @@ const router = express.Router();
 
 // Stock IN: increase product stock and log entry
 router.post("/in", auth, requireRole("admin"), async (req, res) => {
-  const { productId, quantity, note } = req.body || {};
+  const { productId, variantId, quantity, note } = req.body || {};
   if (!mongoose.isValidObjectId(productId)) return res.status(400).json({ error: "invalid_product" });
   const qty = Number(quantity);
   if (!Number.isInteger(qty) || qty <= 0) return res.status(400).json({ error: "invalid_quantity" });
+  
   const doc = await Product.findById(productId);
   if (!doc || !doc.isActive) return res.status(404).json({ error: "not_found" });
-  const before = doc.stock || 0;
-  doc.stock = before + qty;
+
+  let before = 0;
+  let after = 0;
+
+  if (variantId) {
+    const vIdx = (doc.variants || []).findIndex(v => v._id.toString() === String(variantId));
+    if (vIdx === -1) return res.status(404).json({ error: "variant_not_found" });
+    before = doc.variants[vIdx].stock || 0;
+    doc.variants[vIdx].stock = before + qty;
+    // Recalculate total product stock
+    doc.stock = (doc.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
+    after = doc.variants[vIdx].stock;
+  } else {
+    before = doc.stock || 0;
+    doc.stock = before + qty;
+    after = doc.stock;
+  }
+
   await doc.save();
   await StockTxn.create({
     product: doc._id,
+    variantId: variantId ? String(variantId) : undefined,
     type: "ADDED",
     quantity: qty,
     before,
-    after: doc.stock,
+    after,
     refType: "MANUAL",
     note: note || ""
   });
+
   try {
     await AuditLog.create({
       actorId: req.user?.id || "",
@@ -35,12 +54,12 @@ router.post("/in", auth, requireRole("admin"), async (req, res) => {
       type: "STOCK",
       entityType: "PRODUCT",
       entityId: doc._id.toString(),
-      note: `Stock IN +${qty} ${note || ""}`,
+      note: `Stock IN +${qty} ${variantId ? '(Variant: ' + variantId + ')' : ''} ${note || ""}`,
       before: { stock: before },
-      after: { stock: doc.stock }
+      after: { stock: after }
     });
   } catch {}
-  res.status(201).json({ productId: doc._id.toString(), before, added: qty, after: doc.stock });
+  res.status(201).json({ productId: doc._id.toString(), variantId, before, added: qty, after });
 });
 
 // History: list recent stock-in records

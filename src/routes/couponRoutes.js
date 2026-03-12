@@ -9,7 +9,7 @@ const toUpper = (s) => (s || "").toString().trim().toUpperCase();
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
   const code = toUpper(req.body?.code);
-  const { type, value, minAmount, expiryDate, usageLimit, partnerId, partnerName, partnerEmail, partnerPhone, partnerCommissionPercent, maxTotalSales, isActive, password } = req.body || {};
+  const { type, value, minAmount, minOrderValue, maxDiscount, expiryDate, usageLimit, partnerId, partnerName, partnerEmail, partnerPhone, partnerCommissionPercent, maxTotalSales, isActive, password } = req.body || {};
   if (!code || !type || value == null || !expiryDate) return res.status(400).json({ error: "missing_fields" });
   const exists = await Coupon.findOne({ code });
   if (exists) return res.status(409).json({ error: "duplicate_code" });
@@ -30,7 +30,9 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     code,
     type,
     value: Number(value),
-    minAmount: Number(minAmount || 0),
+    minAmount: Number(minAmount || minOrderValue || 0),
+    minOrderValue: Number(minOrderValue || minAmount || 0),
+    maxDiscount: Number(maxDiscount || 0),
     expiryDate: new Date(expiryDate),
     usageLimit: Number(usageLimit || 0),
     partner: partnerRef,
@@ -56,7 +58,15 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (req.body?.code) payload.code = toUpper(req.body.code);
   if (req.body?.type) payload.type = req.body.type;
   if (req.body?.value != null) payload.value = Number(req.body.value);
-  if (req.body?.minAmount != null) payload.minAmount = Number(req.body.minAmount);
+  if (req.body?.minAmount != null) {
+    payload.minAmount = Number(req.body.minAmount);
+    payload.minOrderValue = Number(req.body.minAmount);
+  }
+  if (req.body?.minOrderValue != null) {
+    payload.minOrderValue = Number(req.body.minOrderValue);
+    payload.minAmount = Number(req.body.minOrderValue);
+  }
+  if (req.body?.maxDiscount != null) payload.maxDiscount = Number(req.body.maxDiscount);
   if (req.body?.expiryDate) payload.expiryDate = new Date(req.body.expiryDate);
   if (req.body?.usageLimit != null) payload.usageLimit = Number(req.body.usageLimit);
   if (req.body?.isActive != null) payload.isActive = !!req.body.isActive;
@@ -89,6 +99,43 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   const updated = await Coupon.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
+});
+
+router.post("/validate", auth, async (req, res) => {
+  const code = toUpper(req.body.code);
+  const amount = Number(req.body.amount || 0);
+  if (!code) return res.status(400).json({ error: "missing_code" });
+
+  const coupon = await Coupon.findOne({ code, isActive: true });
+  if (!coupon) return res.status(404).json({ error: "invalid_coupon" });
+
+  if (coupon.expiryDate && new Date() > coupon.expiryDate) {
+    return res.status(400).json({ error: "coupon_expired" });
+  }
+
+  const minVal = coupon.minOrderValue || coupon.minAmount || 0;
+  if (amount < minVal) {
+    return res.status(400).json({ error: `min_order_value_not_met:${minVal}` });
+  }
+
+  if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+    return res.status(400).json({ error: "usage_limit_reached" });
+  }
+
+  let discount = coupon.type === "PERCENT" ? (amount * coupon.value) / 100 : coupon.value;
+  if (coupon.maxDiscount > 0 && discount > coupon.maxDiscount) {
+    discount = coupon.maxDiscount;
+  }
+  if (discount > amount) discount = amount;
+
+  res.json({
+    valid: true,
+    code: coupon.code,
+    discount,
+    payable: amount - discount,
+    type: coupon.type,
+    value: coupon.value
+  });
 });
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {

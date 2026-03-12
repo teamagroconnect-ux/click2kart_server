@@ -9,6 +9,7 @@ const stockTxnSchema = new mongoose.Schema(
     after: { type: Number, required: true },
     refType: { type: String, enum: ["BILL", "MANUAL", "ORDER"], default: "MANUAL" },
     refId: { type: String, default: "" },
+    variantId: { type: String, default: "" },
     note: { type: String, default: "" }
   },
   { timestamps: true }

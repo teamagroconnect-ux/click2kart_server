@@ -245,7 +245,8 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
     return {
       product: it.product,
-      variantId: it.variantId,
+      variantId: it.variantId ? String(it.variantId) : "",
+      attributes: v ? (v.attributes instanceof Map ? Object.fromEntries(v.attributes) : v.attributes) : undefined,
       name: it.name,
       price: it.price,
       gst: it.gst,
@@ -406,7 +407,17 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
       const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
-      return { product: it.product, variantId: it.variantId, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal, image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") };
+      return { 
+        product: it.product, 
+        variantId: it.variantId ? String(it.variantId) : "", 
+        attributes: v ? (v.attributes instanceof Map ? Object.fromEntries(v.attributes) : v.attributes) : undefined,
+        name: it.name, 
+        price: it.price, 
+        gst: it.gst, 
+        quantity: it.quantity, 
+        lineTotal: it.lineTotal, 
+        image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") 
+      };
     });
     const doc = await Order.create({
       customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
@@ -440,7 +451,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       try {
         await createBillFromData({
           customerData: { phone: doc.customer.phone, name: doc.customer.name, email: doc.customer.email },
-          items: doc.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+          items: doc.items.map(it => ({ product: it.product, variantId: it.variantId ? String(it.variantId) : undefined, quantity: it.quantity })),
           paymentType: "RAZORPAY",
           existingOrderId: doc._id
         });
@@ -535,7 +546,7 @@ router.post("/verify-payment", async (req, res) => {
     try {
       await createBillFromData({
         customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
-        items: order.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+        items: order.items.map(it => ({ product: it.product, variantId: it.variantId ? String(it.variantId) : undefined, quantity: it.quantity })),
         paymentType: "RAZORPAY",
         existingOrderId: order._id
       });

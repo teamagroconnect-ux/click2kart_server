@@ -11,6 +11,7 @@ const itemSchema = new mongoose.Schema(
     lineSubtotal: { type: Number, required: true },
     lineGst: { type: Number, required: true },
     lineTotal: { type: Number, required: true },
+    hsn: { type: String, default: "" },
     image: { type: String, default: "" }
   },
   { _id: false }

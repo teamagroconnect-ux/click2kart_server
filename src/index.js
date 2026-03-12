@@ -27,6 +27,7 @@ import recommendationRoutes from "./routes/recommendationRoutes.js";
 import inventoryRoutes from "./routes/inventoryRoutes.js";
 import storeRoutes from "./routes/storeRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import offerRoutes from "./routes/offerRoutes.js";
 
 dotenv.config();
 
@@ -61,6 +62,7 @@ app.use("/api/recommendations", recommendationRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/stores", storeRoutes);
 app.use("/api/payment", paymentRoutes);
+app.use("/api/offers", offerRoutes);
 
 const PORT = process.env.PORT || 5000;
 

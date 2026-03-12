@@ -33,7 +33,11 @@ export const computeTotals = (products, items) => {
     gstTotal += lineGst;
     const rate = p.gst || 0;
     map.set(rate, (map.get(rate) || 0) + lineGst);
-    const attrText = variant ? Object.entries(variant.attributes || {}).filter(([_, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", ") : "";
+    
+    // Convert attributes Map to plain object for Object.entries if needed
+    const vAttrs = variant ? (variant.attributes instanceof Map ? Object.fromEntries(variant.attributes) : variant.attributes) : {};
+    const attrText = variant ? Object.entries(vAttrs || {}).filter(([_, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", ") : "";
+    
     enriched.push({
       product: p._id,
       variantId: variant ? variant._id : undefined,
@@ -44,12 +48,14 @@ export const computeTotals = (products, items) => {
       quantity: qty,
       lineSubtotal,
       lineGst,
-      lineTotal
+      lineTotal,
+      weight: variant?.weight ?? p.weight ?? 0
     });
   }
   const gstBreakdown = [...map.entries()].map(([rate, amount]) => ({ rate, amount }));
   const total = subtotal + gstTotal;
-  return { items: enriched, subtotal, gstTotal, total, gstBreakdown };
+  const totalWeight = enriched.reduce((s, it) => s + (it.weight * it.quantity), 0);
+  return { items: enriched, subtotal, gstTotal, total, gstBreakdown, totalWeight };
 };
 
 export const generateInvoiceNumber = async () => {
