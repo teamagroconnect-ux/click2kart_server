@@ -240,7 +240,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   const allowed = ["name", "description", "highlights", "price", "category", "subcategory", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
-  const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1 });
+  const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1, variants: 1, stock: 1 });
   if (payload.category != null) {
     if (payload.category === "") payload.category = undefined;
     else {
@@ -272,7 +272,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (Array.isArray(payload.attributes)) {
     payload.attributes = payload.attributes.map(a => String(a || '').trim().toLowerCase()).filter(Boolean);
   }
-  if (Array.isArray(payload.variants)) {
+  if (Array.isArray(payload.variants) && payload.variants.length > 0) {
     payload.variants = payload.variants.map(v => {
       const variantAttrs = {};
       if (v.attributes && typeof v.attributes === 'object') {
@@ -280,12 +280,18 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
           variantAttrs[key.toLowerCase()] = String(val || '').trim();
         });
       }
+      // If variant exists, keep its stock unless explicitly provided
+      let existingStock = 0;
+      if (v._id && beforeDoc && beforeDoc.variants) {
+        const existing = beforeDoc.variants.find(ex => ex._id.toString() === v._id.toString());
+        if (existing) existingStock = existing.stock || 0;
+      }
       return {
         _id: v._id || new mongoose.Types.ObjectId(),
         attributes: variantAttrs,
         price: Number(v?.price ?? 0),
         mrp: v?.mrp == null ? undefined : Number(v?.mrp),
-        stock: Number(v?.stock ?? 0),
+        stock: v.stock != null ? Number(v.stock) : existingStock,
         sku: v?.sku ? String(v.sku).trim() : undefined,
         weight: Number(v?.weight ?? 0),
         isActive: v?.isActive != null ? !!v.isActive : true,
@@ -294,6 +300,15 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
     });
     const sum = payload.variants.filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
     payload.stock = Number.isFinite(sum) ? sum : 0;
+  } else if (Array.isArray(payload.variants) && payload.variants.length === 0) {
+    // If variants array is explicitly empty, don't overwrite stock from it.
+    // This allows simple products to maintain their manually entered stock.
+    delete payload.variants;
+  } else {
+    // If variants is not provided at all, preserve existing stock if not in payload
+    if (!("stock" in req.body) && beforeDoc) {
+      payload.stock = beforeDoc.stock;
+    }
   }
 
   // Automatic Price Trend calculation
