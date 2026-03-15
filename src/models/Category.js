@@ -3,11 +3,10 @@ import mongoose from "mongoose";
 const categorySchema = new mongoose.Schema(
   {
     name: { type: String, required: true, unique: true, trim: true, lowercase: true },
+    slug: { type: String, required: true, unique: true, trim: true, lowercase: true },
     description: { type: String, default: "" },
     image: { type: String, default: "" },
-    store: { type: String, default: "" },
-    section: { type: String, default: "" },
-    parent: { type: mongoose.Schema.Types.ObjectId, ref: "Category", default: null },
+    brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", required: true },
     isActive: { type: Boolean, default: true }
   },
   { timestamps: true }

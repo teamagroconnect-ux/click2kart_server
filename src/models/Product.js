@@ -11,14 +11,14 @@ const productSchema = new mongoose.Schema(
     description: { type: String, default: "" },
     price: { type: Number, required: true, min: 0 },
     hsnCode: { type: String, default: "" },
-    category: { type: String, index: true },
-    subcategory: { type: String, index: true },
+    brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", required: true, index: true },
+    category: { type: mongoose.Schema.Types.ObjectId, ref: "Category", required: true, index: true },
+    subCategory: { type: mongoose.Schema.Types.ObjectId, ref: "SubCategory", index: true },
     images: { type: [imageSchema], default: [] },
     stock: { type: Number, required: true, min: 0 },
     weight: { type: Number, default: 0, min: 0 }, // weight in grams
     gst: { type: Number, default: 0, min: 0 },
     mrp: { type: Number, min: 0 },
-    brand: { type: String, index: true },
     minOrderQty: { type: Number, default: 1, min: 0 },
     store: { type: String, default: "" },
     section: { type: String, default: "" },
@@ -60,8 +60,9 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-productSchema.index({ name: "text", description: "text", category: "text", subcategory: "text" }, { weights: { name: 10, category: 5, subcategory: 4, description: 2 } });
-productSchema.index({ isActive: 1, category: 1, createdAt: -1 });
+productSchema.index({ name: "text", description: "text" }, { weights: { name: 10, description: 2 } });
+productSchema.index({ brand: 1, category: 1, subCategory: 1 });
+productSchema.index({ isActive: 1, createdAt: -1 });
 productSchema.index({ isActive: 1, stock: 1 });
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

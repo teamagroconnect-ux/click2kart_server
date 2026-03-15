@@ -60,8 +60,15 @@ router.get("/", async (req, res) => {
   const connected = mongoose.connection.readyState === 1;
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
   const query = { isActive: true };
-  if (req.query.category) query.category = req.query.category.toString().toLowerCase();
-  if (req.query.subcategory) query.subcategory = req.query.subcategory.toString().toLowerCase();
+  if (req.query.brand) {
+    if (mongoose.isValidObjectId(req.query.brand)) query.brand = req.query.brand;
+  }
+  if (req.query.category) {
+    if (mongoose.isValidObjectId(req.query.category)) query.category = req.query.category;
+  }
+  if (req.query.subCategory) {
+    if (mongoose.isValidObjectId(req.query.subCategory)) query.subCategory = req.query.subCategory;
+  }
   if (req.query.store) query.store = req.query.store.toString().trim();
   if (req.query.section) query.section = req.query.section.toString().trim();
   const q = req.query.q ? String(req.query.q).trim() : "";
@@ -71,7 +78,7 @@ router.get("/", async (req, res) => {
   const useText = q && q.length >= 2;
   if (useText) query.$text = { $search: q };
   const total = await Product.countDocuments(query);
-  let cursor = Product.find(query);
+  let cursor = Product.find(query).populate("brand", "name").populate("category", "name").populate("subCategory", "name");
   if (useText) cursor = cursor.select({ score: { $meta: "textScore" } }).sort({ score: { $meta: "textScore" }, createdAt: -1 });
   else cursor = cursor.sort({ createdAt: -1 });
   const items = await cursor.skip((page - 1) * limit).limit(limit);
@@ -158,22 +165,13 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
-  const { name, price, category, subcategory, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brand, minOrderQty, store, section } = req.body || {};
-  if (!name || price == null || stock == null) return res.status(400).json({ error: "missing_fields" });
-  let categoryValue = undefined;
-  if (category) {
-    const catName = String(category).trim().toLowerCase();
-    const cat = await Category.findOne({ name: catName, isActive: true });
-    if (!cat) return res.status(400).json({ error: "category_not_found" });
-    categoryValue = catName;
-  }
-  let subcategoryValue = undefined;
-  if (subcategory) {
-    const subName = String(subcategory).trim().toLowerCase();
-    const sub = await Category.findOne({ name: subName, isActive: true });
-    if (!sub) return res.status(400).json({ error: "subcategory_not_found" });
-    subcategoryValue = subName;
-  }
+  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section } = req.body || {};
+  if (!name || price == null || stock == null || !brandId || !categoryId) return res.status(400).json({ error: "missing_fields" });
+  
+  if (!mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
+  if (!mongoose.isValidObjectId(categoryId)) return res.status(400).json({ error: "invalid_category" });
+  if (subCategoryId && !mongoose.isValidObjectId(subCategoryId)) return res.status(400).json({ error: "invalid_subcategory" });
+
   const imgArr = Array.isArray(images)
     ? images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url)
     : [];
@@ -181,15 +179,15 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     name: String(name).trim(),
     description: description || "",
     price: Number(price),
-    brand: brand ? String(brand).trim() : undefined,
-    category: categoryValue,
-    subcategory: subcategoryValue,
+    brand: brandId,
+    category: categoryId,
+    subCategory: subCategoryId || undefined,
     images: imgArr,
     stock: Number(stock),
     weight: Number(weight || 0),
     gst: gst == null ? 0 : Number(gst),
     mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
-    priceTrend: 0, // Default to 0 (down) for new products
+    priceTrend: 0, 
     store: store ? String(store).trim() : "",
     section: section ? String(section).trim() : "",
     minOrderQty: Number(minOrderQty || 0),
@@ -237,27 +235,31 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "price", "category", "subcategory", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brand", "minOrderQty", "store", "section"];
+  const allowed = ["name", "description", "highlights", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
+  
   const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1, variants: 1, stock: 1 });
-  if (payload.category != null) {
-    if (payload.category === "") payload.category = undefined;
-    else {
-      const catName = String(payload.category).trim().toLowerCase();
-      const cat = await Category.findOne({ name: catName, isActive: true });
-      if (!cat) return res.status(400).json({ error: "category_not_found" });
-      payload.category = catName;
-    }
+  if (!beforeDoc) return res.status(404).json({ error: "not_found" });
+
+  if (payload.brandId) {
+    if (!mongoose.isValidObjectId(payload.brandId)) return res.status(400).json({ error: "invalid_brand" });
+    payload.brand = payload.brandId;
+    delete payload.brandId;
   }
-  if (payload.subcategory != null) {
-    if (payload.subcategory === "") payload.subcategory = undefined;
-    else {
-      const subName = String(payload.subcategory).trim().toLowerCase();
-      const sub = await Category.findOne({ name: subName, isActive: true });
-      if (!sub) return res.status(400).json({ error: "subcategory_not_found" });
-      payload.subcategory = subName;
+  if (payload.categoryId) {
+    if (!mongoose.isValidObjectId(payload.categoryId)) return res.status(400).json({ error: "invalid_category" });
+    payload.category = payload.categoryId;
+    delete payload.categoryId;
+  }
+  if (payload.subCategoryId !== undefined) {
+    if (payload.subCategoryId === null || payload.subCategoryId === "") {
+      payload.subCategory = null;
+    } else {
+      if (!mongoose.isValidObjectId(payload.subCategoryId)) return res.status(400).json({ error: "invalid_subcategory" });
+      payload.subCategory = payload.subCategoryId;
     }
+    delete payload.subCategoryId;
   }
   if (Array.isArray(payload.images)) payload.images = payload.images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url);
   if (Array.isArray(payload.highlights)) {
