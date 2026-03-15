@@ -11,7 +11,7 @@ const productSchema = new mongoose.Schema(
     description: { type: String, default: "" },
     price: { type: Number, required: true, min: 0 },
     hsnCode: { type: String, default: "" },
-    brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", required: true, index: true },
+    brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", default: null, index: true },
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category", required: true, index: true },
     subCategory: { type: mongoose.Schema.Types.ObjectId, ref: "SubCategory", index: true },
     images: { type: [imageSchema], default: [] },

@@ -166,9 +166,9 @@ router.get("/recommend", async (req, res) => {
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
   const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section } = req.body || {};
-  if (!name || price == null || stock == null || !brandId || !categoryId) return res.status(400).json({ error: "missing_fields" });
+  if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
-  if (!mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
+  if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
   if (!mongoose.isValidObjectId(categoryId)) return res.status(400).json({ error: "invalid_category" });
   if (subCategoryId && !mongoose.isValidObjectId(subCategoryId)) return res.status(400).json({ error: "invalid_subcategory" });
 
@@ -179,7 +179,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     name: String(name).trim(),
     description: description || "",
     price: Number(price),
-    brand: brandId,
+    brand: brandId || null,
     category: categoryId,
     subCategory: subCategoryId || undefined,
     images: imgArr,

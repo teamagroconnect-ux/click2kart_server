@@ -7,17 +7,21 @@ const router = express.Router();
 
 router.post("/", auth, requireRole("admin"), async (req, res) => {
   const { name, slug, brandId, image, description } = req.body || {};
-  if (!name || !slug || !brandId) return res.status(400).json({ error: "missing_fields" });
+  if (!name || !slug) return res.status(400).json({ error: "missing_fields" });
   
-  if (!mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
+  if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
   
-  const exists = await Category.findOne({ $or: [{ name: name.toLowerCase() }, { slug: slug.toLowerCase() }], brand: brandId });
+  const filter = { $or: [{ name: name.toLowerCase() }, { slug: slug.toLowerCase() }] };
+  if (brandId) filter.brand = brandId;
+  else filter.brand = null;
+
+  const exists = await Category.findOne(filter);
   if (exists) return res.status(409).json({ error: "duplicate_category" });
   
   const payload = {
     name: name.toLowerCase(),
     slug: slug.toLowerCase(),
-    brand: brandId,
+    brand: brandId || null,
     image: image || "",
     description: description || ""
   };

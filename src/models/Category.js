@@ -6,7 +6,7 @@ const categorySchema = new mongoose.Schema(
     slug: { type: String, required: true, unique: true, trim: true, lowercase: true },
     description: { type: String, default: "" },
     image: { type: String, default: "" },
-    brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", required: true },
+    brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", default: null },
     isActive: { type: Boolean, default: true }
   },
   { timestamps: true }
