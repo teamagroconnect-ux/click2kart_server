@@ -37,7 +37,7 @@ router.get("/", async (req, res) => {
   if (active === "false") filter.isActive = false;
   if (brandId) {
     if (!mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand_id" });
-    filter.brand = brandId;
+    filter.$or = [{ brand: brandId }, { brand: null }];
   }
   const items = await Category.find(filter).populate("brand", "name").sort({ name: 1 });
   res.json(items);
