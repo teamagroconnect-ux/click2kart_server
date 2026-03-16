@@ -4,7 +4,19 @@ import Customer from "../models/Customer.js";
 
 const router = express.Router();
 
-router.get("/me", auth, requireRole("customer"), async (req, res) => {
+router.get("/me", auth, async (req, res) => {
+  if (req.user.role === "admin") {
+    const Admin = (await import("../models/Admin.js")).default;
+    const admin = await Admin.findById(req.user.id).select("name email");
+    if (!admin) return res.status(404).json({ error: "not_found" });
+    return res.json({
+      id: admin._id.toString(),
+      name: admin.name,
+      email: admin.email,
+      role: "admin"
+    });
+  }
+
   const user = await Customer.findById(req.user.id).select("name email phone address isKycComplete kyc");
   if (!user) return res.status(404).json({ error: "not_found" });
   res.json({
@@ -14,7 +26,8 @@ router.get("/me", auth, requireRole("customer"), async (req, res) => {
     phone: user.phone,
     defaultAddress: user.address || "",
     isKycComplete: !!user.isKycComplete,
-    kyc: user.kyc || {}
+    kyc: user.kyc || {},
+    role: "customer"
   });
 });
 
