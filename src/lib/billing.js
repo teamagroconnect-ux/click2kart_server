@@ -36,21 +36,21 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   
   // Re-verify stock
   for (const it of items) {
-    const p = products.find((x) => x._id.toString() === (it.productId || it.product).toString());
+    const p = products.find((x) => (x._id || x.productId).toString() === (it.productId || it.product).toString());
     const qty = Number(it.quantity);
     if (!p) throw new Error(`insufficient_stock:unknown`);
-    if (it.variantId) {
-      const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+    if (it.variantSku) {
+      const v = (p.variants || []).find(v => v.sku === String(it.variantSku));
       if (!v || (v.stock || 0) < qty) throw new Error(`insufficient_stock:${p.name}`);
     } else {
       if (p.stock < qty) throw new Error(`insufficient_stock:${p.name}`);
     }
   }
 
-  const totals = computeTotals(products, items.map(it => ({ ...it, productId: it.productId || it.product })));
+  const totals = computeTotals(products, items.map(it => ({ ...it, productId: it.productId || it.product, variantSku: it.variantSku })));
   const billItems = totals.items.map(it => {
     const p = products.find(x => x._id.toString() === it.product.toString());
-    const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
+    const v = it.variantSku ? (p?.variants || []).find(v => v.sku === String(it.variantSku)) : null;
     const image = v?.images?.[0]?.url || p?.images?.[0]?.url || "";
     return { ...it, image, hsn: p?.hsnCode || "" };
   });
@@ -74,9 +74,9 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   try {
     await session.withTransaction(async () => {
       for (const it of items) {
-        const p = products.find((x) => x._id.toString() === (it.productId || it.product).toString());
-        if (it.variantId) {
-          const idx = (p.variants || []).findIndex(v => v._id.toString() === String(it.variantId));
+        const p = products.find((x) => (x._id || x.productId).toString() === (it.productId || it.product).toString());
+        if (it.variantSku) {
+          const idx = (p.variants || []).findIndex(v => v.sku === String(it.variantSku));
           const before = p.variants[idx]?.stock || 0;
           p.variants[idx].stock = before - Number(it.quantity);
           // Recalculate total product stock
@@ -91,7 +91,7 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
               after: p.variants[idx].stock,
               refType: "BILL",
               refId: invoiceNumber,
-              variantId: String(it.variantId)
+              variantSku: String(it.variantSku)
             }
           ], { session });
         } else {
@@ -165,23 +165,46 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   // Stock notification
   try {
     const threshold = Number(process.env.LOW_STOCK_THRESHOLD ?? 5);
-    const lowItems = await Product.find({ 
+    const affectedProducts = await Product.find({ 
       _id: { $in: ids }, 
-      stock: { $lte: threshold }, 
       isActive: true 
     });
     
-    // Filter out items that have been alerted recently (e.g. within the last 1 hour)
-    const itemsToAlert = lowItems.filter(p => !lowStockAlertCache.has(p._id.toString()));
+    const alerts = [];
+    affectedProducts.forEach(p => {
+      if (p.variants && p.variants.length > 0) {
+        p.variants.forEach(v => {
+          if (v.isActive !== false && v.stock <= threshold) {
+            const alertId = `${p._id}_${v.sku}`;
+            if (!lowStockAlertCache.has(alertId)) {
+              alerts.push({ 
+                _id: p._id, 
+                name: `${p.name} (${v.sku || 'No SKU'})`, 
+                stock: v.stock,
+                alertId 
+              });
+            }
+          }
+        });
+      } else if (p.stock <= threshold) {
+        if (!lowStockAlertCache.has(p._id.toString())) {
+          alerts.push({ 
+            _id: p._id, 
+            name: p.name, 
+            stock: p.stock,
+            alertId: p._id.toString() 
+          });
+        }
+      }
+    });
     
-    if (itemsToAlert.length > 0) {
-      await sendLowStockEmail(itemsToAlert, threshold);
+    if (alerts.length > 0) {
+      await sendLowStockEmail(alerts, threshold);
       // Mark as alerted
-      itemsToAlert.forEach(p => {
-        const id = p._id.toString();
-        lowStockAlertCache.add(id);
+      alerts.forEach(a => {
+        lowStockAlertCache.add(a.alertId);
         // Clear from cache after 1 hour
-        setTimeout(() => lowStockAlertCache.delete(id), 60 * 60 * 1000);
+        setTimeout(() => lowStockAlertCache.delete(a.alertId), 60 * 60 * 1000);
       });
     }
   } catch (err) { console.error("Notification failed", err); }

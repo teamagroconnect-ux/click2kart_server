@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const cartItemSchema = new mongoose.Schema(
   {
     product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-    variantId: { type: String },
+    variantSku: { type: String }, // Phase 5 requirement
     quantity: { type: Number, required: true, min: 1 },
     addedAt: { type: Date, default: Date.now }
   },

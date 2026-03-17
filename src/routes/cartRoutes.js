@@ -19,12 +19,12 @@ const serializeCart = async (cart) => {
         bulkTiers: it.product.bulkTiers || [],
         mrp: it.product.mrp || it.product.price
       };
-      if (it.variantId) {
-        const v = (it.product.variants || []).find(v => v._id.toString() === it.variantId);
+      if (it.variantSku) {
+        const v = (it.product.variants || []).find(v => v.sku === it.variantSku);
         if (v) {
           return {
             ...base,
-            variantId: it.variantId,
+            variantSku: it.variantSku,
             name: it.product.name,
             attributes: v.attributes,
             price: v.price ?? it.product.price,
@@ -56,7 +56,7 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/add", async (req, res) => {
-  const { productId, variantId, quantity } = req.body || {};
+  const { productId, variantSku, quantity } = req.body || {};
   const qty = Number(quantity || 1);
   if (!mongoose.isValidObjectId(productId) || !Number.isInteger(qty) || qty <= 0) {
     return res.status(400).json({ error: "invalid_payload" });
@@ -65,8 +65,8 @@ router.post("/add", async (req, res) => {
   const product = await Product.findOne({ _id: productId, isActive: true });
   if (!product) return res.status(404).json({ error: "product_not_found" });
   let variant = null;
-  if (variantId) {
-    variant = (product.variants || []).find(v => v._id.toString() === String(variantId));
+  if (variantSku) {
+    variant = (product.variants || []).find(v => v.sku === String(variantSku));
     if (!variant || !variant.isActive) return res.status(404).json({ error: "variant_not_found" });
   }
 
@@ -78,7 +78,7 @@ router.post("/add", async (req, res) => {
     cart = await Cart.create({ customer: req.user.id, items: [] });
   }
 
-  const existing = cart.items.find((it) => it.product.toString() === productId && String(it.variantId || "") === String(variantId || ""));
+  const existing = cart.items.find((it) => it.product.toString() === productId && String(it.variantSku || "") === String(variantSku || ""));
   const currentQty = existing ? existing.quantity : 0;
   const available = variant ? (variant.stock || 0) : product.stock;
   if (currentQty + effQty > available) return res.status(400).json({ error: "insufficient_stock" });
@@ -86,7 +86,7 @@ router.post("/add", async (req, res) => {
   if (existing) {
     existing.quantity += effQty;
   } else {
-    cart.items.push({ product: product._id, variantId: variantId || undefined, quantity: effQty });
+    cart.items.push({ product: product._id, variantSku: variantSku || undefined, quantity: effQty });
   }
   await cart.save();
 
@@ -95,7 +95,7 @@ router.post("/add", async (req, res) => {
 });
 
 router.put("/update", async (req, res) => {
-  const { productId, variantId, quantity } = req.body || {};
+  const { productId, variantSku, quantity } = req.body || {};
   const qty = Number(quantity);
   if (!mongoose.isValidObjectId(productId) || !Number.isInteger(qty)) {
     return res.status(400).json({ error: "invalid_payload" });
@@ -104,7 +104,7 @@ router.put("/update", async (req, res) => {
   const cart = await Cart.findOne({ customer: req.user.id });
   if (!cart) return res.json({ items: [] });
 
-  const idx = cart.items.findIndex((it) => it.product.toString() === productId && String(it.variantId || "") === String(variantId || ""));
+  const idx = cart.items.findIndex((it) => it.product.toString() === productId && String(it.variantSku || "") === String(variantSku || ""));
   if (idx === -1) return res.json(await serializeCart(cart));
 
   if (qty <= 0) {
@@ -112,7 +112,7 @@ router.put("/update", async (req, res) => {
   } else {
     const product = await Product.findOne({ _id: productId, isActive: true });
     if (!product) return res.status(404).json({ error: "product_not_found" });
-    const variant = variantId ? (product.variants || []).find(v => v._id.toString() === String(variantId)) : null;
+    const variant = variantSku ? (product.variants || []).find(v => v.sku === String(variantSku)) : null;
     const available = variant ? (variant.stock || 0) : product.stock;
     const minQty = Math.max(1, Number(product.minOrderQty || 0));
     const effQty = Math.max(minQty, qty);
@@ -124,13 +124,13 @@ router.put("/update", async (req, res) => {
 });
 
 router.delete("/remove", async (req, res) => {
-  const { productId, variantId } = req.body || {};
+  const { productId, variantSku } = req.body || {};
   if (!mongoose.isValidObjectId(productId)) {
     return res.status(400).json({ error: "invalid_payload" });
   }
   const cart = await Cart.findOne({ customer: req.user.id });
   if (!cart) return res.json({ items: [] });
-  cart.items = cart.items.filter((it) => !(it.product.toString() === productId && String(it.variantId || "") === String(variantId || "")));
+  cart.items = cart.items.filter((it) => !(it.product.toString() === productId && String(it.variantSku || "") === String(variantSku || "")));
   await cart.save();
   res.json(await serializeCart(cart));
 });

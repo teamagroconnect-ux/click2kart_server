@@ -12,7 +12,7 @@ export const computeTotals = (products, items) => {
     const qty = Number(it.quantity);
     if (!Number.isInteger(qty) || qty <= 0) throw new Error("invalid_quantity");
 
-    const variant = it.variantId ? (p.variants || []).find(v => v._id.toString() === it.variantId) : null;
+    const variant = it.variantSku ? (p.variants || []).find(v => v.sku === it.variantSku) : null;
     let effectivePrice = variant?.price ?? p.price;
     // Bulk pricing: prefer highest applicable tier
     if (Array.isArray(p.bulkTiers) && p.bulkTiers.length) {
@@ -40,7 +40,7 @@ export const computeTotals = (products, items) => {
     
     enriched.push({
       product: p._id,
-      variantId: variant ? variant._id : undefined,
+      variantSku: variant ? variant.sku : undefined,
       name: variant ? `${p.name} (${attrText})` : p.name,
       category: p.category || "General",
       price: effectivePrice,

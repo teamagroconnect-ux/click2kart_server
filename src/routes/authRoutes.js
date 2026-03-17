@@ -31,13 +31,24 @@ router.post("/login", async (req, res) => {
   await admin.save();
   
   const token = jwt.sign(
-    { id: admin._id.toString(), role: "admin", email: admin.email },
+    { 
+      id: admin._id.toString(), 
+      role: admin.role || "admin", 
+      email: admin.email,
+      permissions: admin.permissions || []
+    },
     process.env.JWT_SECRET,
     { expiresIn: "12h" }
   );
   res.json({
     token,
-    admin: { id: admin._id.toString(), name: admin.name, email: admin.email, role: "admin" }
+    admin: { 
+      id: admin._id.toString(), 
+      name: admin.name, 
+      email: admin.email, 
+      role: admin.role || "admin",
+      permissions: admin.permissions || []
+    }
   });
 });
 

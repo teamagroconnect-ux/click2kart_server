@@ -5,22 +5,121 @@ import Customer from "../models/Customer.js";
 import Bill from "../models/Bill.js";
 import { sendEmail } from "../lib/mailer.js";
 
+import Admin from "../models/Admin.js";
+
 const router = express.Router();
 
-router.get("/stats", auth, requireRole("admin"), async (req, res) => {
+// Get all staff members
+router.get("/staff", auth, requireRole("admin"), async (req, res) => {
+  const staff = await Admin.find({ role: "staff" }).select("-password");
+  res.json(staff);
+});
+
+// Create new staff
+router.post("/staff", auth, requireRole("admin"), async (req, res) => {
+  const { name, email, password, permissions } = req.body || {};
+  if (!name || !email || !password) return res.status(400).json({ error: "missing_fields" });
+  
+  const exists = await Admin.findOne({ email: email.toLowerCase() });
+  if (exists) return res.status(400).json({ error: "email_exists" });
+
+  const staff = await Admin.create({
+    name,
+    email: email.toLowerCase(),
+    password,
+    role: "staff",
+    permissions: permissions || [],
+    isActive: true
+  });
+
+  const staffObj = staff.toObject();
+  delete staffObj.password;
+  res.status(201).json(staffObj);
+});
+
+// Update staff permissions/status
+router.put("/staff/:id", auth, requireRole("admin"), async (req, res) => {
+  const { name, permissions, isActive, password } = req.body || {};
+  const staff = await Admin.findById(req.params.id);
+  if (!staff) return res.status(404).json({ error: "not_found" });
+
+  if (name) staff.name = name;
+  if (permissions) staff.permissions = permissions;
+  if (isActive !== undefined) staff.isActive = isActive;
+  if (password) staff.password = password;
+
+  await staff.save();
+  const staffObj = staff.toObject();
+  delete staffObj.password;
+  res.json(staffObj);
+});
+
+// Delete staff
+router.delete("/staff/:id", auth, requireRole("admin"), async (req, res) => {
+  await Admin.findByIdAndDelete(req.params.id);
+  res.json({ deleted: true });
+});
+
+router.get("/stats", auth, async (req, res) => {
+  // Staff can also see basic stats, but maybe filtered based on permissions in the future
+  // For now, let both admin and staff access this route if authenticated
   const Order = (await import("../models/Order.js")).default;
-  const [totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock, newOrders, pendingCash] = await Promise.all([
+  const threshold = Number(process.env.LOW_STOCK_THRESHOLD ?? 5);
+  const [totalProducts, totalCustomers, pendingCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
     Product.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: false }),
     Bill.countDocuments({}),
-    Product.find({ isActive: true, stock: { $lte: Number(process.env.LOW_STOCK_THRESHOLD ?? 5) } })
+    Product.find({ 
+      isActive: true, 
+      $or: [
+        { variants: { $exists: true, $not: { $size: 0 } }, "variants.stock": { $lte: threshold } },
+        { variants: { $exists: false }, stock: { $lte: threshold } },
+        { variants: { $size: 0 }, stock: { $lte: threshold } }
+      ]
+    })
       .sort({ stock: 1 })
-      .limit(10),
+      .limit(20),
     Order.countDocuments({ status: "NEW" }),
     Order.countDocuments({ status: "PENDING_ADMIN_APPROVAL" })
   ]);
-  res.json({ totalProducts, totalCustomers, pendingCustomers, totalBills, lowStock, newOrders, pendingCash });
+
+  // Flatten low stock to SKU level for the dashboard
+  const lowStock = [];
+  lowStockProducts.forEach(p => {
+    if (p.variants && p.variants.length > 0) {
+      p.variants.forEach(v => {
+        if (v.isActive !== false && v.stock <= threshold) {
+          lowStock.push({
+            _id: `${p._id}_${v.sku}`,
+            productId: p._id,
+            name: `${p.name} (${v.sku || 'No SKU'})`,
+            stock: v.stock,
+            isVariant: true,
+            sku: v.sku
+          });
+        }
+      });
+    } else if (p.stock <= threshold) {
+      lowStock.push({
+        _id: p._id,
+        productId: p._id,
+        name: p.name,
+        stock: p.stock,
+        isVariant: false
+      });
+    }
+  });
+
+  res.json({ 
+    totalProducts, 
+    totalCustomers, 
+    pendingCustomers, 
+    totalBills, 
+    lowStock: lowStock.sort((a, b) => a.stock - b.stock).slice(0, 10), 
+    newOrders, 
+    pendingCash 
+  });
 });
 
 router.get("/settings", auth, requireRole("admin"), (req, res) => {

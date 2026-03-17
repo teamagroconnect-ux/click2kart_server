@@ -56,6 +56,51 @@ const sanitizeProduct = (p, canViewPrice) => {
   return obj;
 };
 
+router.get("/grouped", async (req, res) => {
+  const connected = mongoose.connection.readyState === 1;
+  if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
+
+  const query = { isActive: true };
+  if (req.query.brand) {
+    if (mongoose.isValidObjectId(req.query.brand)) query.brand = new mongoose.Types.ObjectId(req.query.brand);
+  }
+  if (req.query.category) {
+    if (mongoose.isValidObjectId(req.query.category)) query.category = new mongoose.Types.ObjectId(req.query.category);
+  }
+
+  const pipeline = [
+    { $match: query },
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: "$category",
+        products: { $push: "$$ROOT" }
+      }
+    },
+    {
+      $lookup: {
+        from: "categories",
+        localField: "_id",
+        foreignField: "_id",
+        as: "categoryInfo"
+      }
+    },
+    { $unwind: "$categoryInfo" },
+    { $sort: { "categoryInfo.name": 1 } }
+  ];
+
+  const groupedResults = await Product.aggregate(pipeline);
+  
+  const canViewPrice = isViewerAuthorized(req);
+  
+  const formatted = groupedResults.map(group => ({
+    category: group.categoryInfo,
+    items: group.products.map(p => sanitizeProduct(p, canViewPrice))
+  }));
+
+  res.json(formatted);
+});
+
 router.get("/", async (req, res) => {
   const connected = mongoose.connection.readyState === 1;
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
@@ -90,8 +135,42 @@ router.get("/", async (req, res) => {
 router.get("/low-stock", auth, requireRole("admin"), async (req, res) => {
   const threshold = Number(req.query.threshold ?? 5);
   const t = Number.isFinite(threshold) && threshold >= 0 ? threshold : 5;
-  const items = await Product.find({ isActive: true, stock: { $lte: t } }).sort({ stock: 1, updatedAt: -1 });
-  res.json({ threshold: t, items });
+  const items = await Product.find({ 
+    isActive: true, 
+    $or: [
+      { variants: { $exists: true, $not: { $size: 0 } }, "variants.stock": { $lte: t } },
+      { variants: { $exists: false }, stock: { $lte: t } },
+      { variants: { $size: 0 }, stock: { $lte: t } }
+    ]
+  }).sort({ stock: 1, updatedAt: -1 });
+
+  // Flatten to SKU level
+  const flattened = [];
+  items.forEach(p => {
+    if (p.variants && p.variants.length > 0) {
+      p.variants.forEach(v => {
+        if (v.isActive !== false && v.stock <= t) {
+          flattened.push({
+            _id: p._id,
+            name: p.name,
+            sku: v.sku,
+            stock: v.stock,
+            isVariant: true,
+            attributes: v.attributes instanceof Map ? Object.fromEntries(v.attributes) : v.attributes
+          });
+        }
+      });
+    } else if (p.stock <= t) {
+      flattened.push({
+        _id: p._id,
+        name: p.name,
+        stock: p.stock,
+        isVariant: false
+      });
+    }
+  });
+
+  res.json({ threshold: t, items: flattened.sort((a, b) => a.stock - b.stock) });
 });
 
 router.get("/:id", async (req, res) => {
@@ -446,7 +525,7 @@ router.put("/:id/variants/:vid", auth, requireRole("admin"), async (req, res) =>
     // Recalculate total product stock
     p.stock = (p.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
     await p.save();
-    await StockTxn.create({ product: p._id, type: "ADJUST", quantity: qty, before, after: qty, variantId: v._id.toString() });
+    await StockTxn.create({ product: p._id, type: "ADJUST", quantity: qty, before, after: qty, variantSku: v.sku });
   }
   if (payload.isActive != null) {
     v.isActive = !!payload.isActive;
@@ -483,7 +562,7 @@ router.patch("/:id/variants/:vid/stock", auth, requireRole("admin"), async (req,
     p.stock = Number.isFinite(sum) ? sum : 0;
     await p.save();
   } catch {}
-  await StockTxn.create({ product: p._id, type: req.body?.reason === "ADJUST" ? "ADJUST" : "SOLD", quantity: qty, before, after: v.stock, refType: "MANUAL", note: req.body?.note || "", variantId: v._id.toString() });
+  await StockTxn.create({ product: p._id, type: req.body?.reason === "ADJUST" ? "ADJUST" : "SOLD", quantity: qty, before, after: v.stock, refType: "MANUAL", note: req.body?.note || "", variantSku: v.sku });
   res.json({ id: v._id.toString(), stock: v.stock });
 });
 

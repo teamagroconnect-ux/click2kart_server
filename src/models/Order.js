@@ -8,7 +8,7 @@ const orderItemSchema = new mongoose.Schema(
     gst: { type: Number, required: true },
     quantity: { type: Number, required: true },
     lineTotal: { type: Number, required: true },
-    variantId: { type: String, default: "" },
+    variantSku: { type: String, default: "" }, // Phase 6 requirement
     attributes: { type: Map, of: String },
     image: { type: String, default: "" }
   },

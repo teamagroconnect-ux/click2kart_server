@@ -221,9 +221,9 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     if (!p) return res.status(400).json({ error: "product_not_found" });
     if (p.minOrderQty && Number(p.minOrderQty) > 0 && it.quantity < Number(p.minOrderQty)) {
       return res.status(400).json({ error: `MOQ_not_met:${p.minOrderQty}` });
-    }
-    if (it.variantId) {
-      const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+     }
+    if (it.variantSku) {
+      const v = (p.variants || []).find(v => v.sku === String(it.variantSku));
       if (!v || (v.stock || 0) < it.quantity) {
         return res.status(400).json({ error: `Insufficient stock for ${p.name}` });
       }
@@ -242,10 +242,10 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
   const orderItems = totals.items.map((it) => {
     const p = products.find(x => x._id.toString() === it.product.toString());
-    const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
+    const v = it.variantSku ? (p?.variants || []).find(v => v.sku === String(it.variantSku)) : null;
     return {
       product: it.product,
-      variantId: it.variantId ? String(it.variantId) : "",
+      variantSku: it.variantSku ? String(it.variantSku) : "",
       attributes: v ? (v.attributes instanceof Map ? Object.fromEntries(v.attributes) : v.attributes) : undefined,
       name: it.name,
       price: it.price,
@@ -393,8 +393,8 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       const p = products.find(x => x._id.toString() === it.productId);
       if (!p) return res.status(400).json({ error: "product_not_found" });
       const qty = Number(it.quantity || 0);
-      if (it.variantId) {
-        const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+      if (it.variantSku) {
+        const v = (p.variants || []).find(v => v.sku === String(it.variantSku));
         if (!v || (v.stock || 0) < qty) return res.status(400).json({ error: "stock_changed" });
       } else if ((p.stock || 0) < qty) {
         return res.status(400).json({ error: "stock_changed" });
@@ -406,10 +406,10 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
 
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
-      const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
+      const v = it.variantSku ? (p?.variants || []).find(v => v.sku === String(it.variantSku)) : null;
       return { 
         product: it.product, 
-        variantId: it.variantId ? String(it.variantId) : "", 
+        variantSku: it.variantSku ? String(it.variantSku) : "", 
         attributes: v ? (v.attributes instanceof Map ? Object.fromEntries(v.attributes) : v.attributes) : undefined,
         name: it.name, 
         price: it.price, 
@@ -451,7 +451,11 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       try {
         await createBillFromData({
           customerData: { phone: doc.customer.phone, name: doc.customer.name, email: doc.customer.email },
-          items: doc.items.map(it => ({ product: it.product, variantId: it.variantId ? String(it.variantId) : undefined, quantity: it.quantity })),
+          items: doc.items.map(it => ({ 
+            product: it.product, 
+            variantSku: it.variantSku ? String(it.variantSku) : undefined, 
+            quantity: it.quantity 
+          })),
           paymentType: "RAZORPAY",
           existingOrderId: doc._id
         });
@@ -505,8 +509,8 @@ router.post("/verify-payment", async (req, res) => {
         const p = products.find(x => x._id.toString() === it.product.toString());
         if (!p) return res.status(400).json({ error: "product_not_found" });
         const qty = Number(it.quantity || 0);
-        if (it.variantId) {
-          const v = (p.variants || []).find(v => v._id.toString() === String(it.variantId));
+        if (it.variantSku) {
+          const v = (p.variants || []).find(v => v.sku === String(it.variantSku));
           if (!v || (v.stock || 0) < qty) return res.status(400).json({ error: "stock_changed" });
         } else if ((p.stock || 0) < qty) {
           return res.status(400).json({ error: "stock_changed" });
@@ -515,7 +519,7 @@ router.post("/verify-payment", async (req, res) => {
       // Totals check with possible new bulk pricing
       const recomputeItems = order.items.map(it => ({
         productId: it.product.toString(),
-        variantId: it.variantId ? it.variantId.toString() : undefined,
+        variantSku: it.variantSku ? it.variantSku.toString() : undefined,
         quantity: it.quantity
       }));
       const totals = computeTotals(products, recomputeItems);
@@ -546,7 +550,11 @@ router.post("/verify-payment", async (req, res) => {
     try {
       await createBillFromData({
         customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
-        items: order.items.map(it => ({ product: it.product, variantId: it.variantId ? String(it.variantId) : undefined, quantity: it.quantity })),
+        items: order.items.map(it => ({ 
+          product: it.product, 
+          variantSku: it.variantSku ? String(it.variantSku) : undefined, 
+          quantity: it.quantity 
+        })),
         paymentType: "RAZORPAY",
         existingOrderId: order._id
       });
@@ -618,8 +626,8 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
 
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
-      const v = it.variantId ? (p?.variants || []).find(v => v._id.toString() === String(it.variantId)) : null;
-      return { product: it.product, variantId: it.variantId, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal, image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") };
+      const v = it.variantSku ? (p?.variants || []).find(v => v.sku === String(it.variantSku)) : null;
+      return { product: it.product, variantSku: it.variantSku, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal, image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") };
     });
     const doc = await Order.create({
       customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
@@ -704,7 +712,7 @@ router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res)
     try {
       await createBillFromData({
         customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
-        items: order.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+        items: order.items.map(it => ({ product: it.product, variantSku: it.variantSku, quantity: it.quantity })),
         paymentType: "MANUAL",
         existingOrderId: order._id
       });
@@ -855,7 +863,7 @@ router.patch("/:id/finalize-cod", auth, requireRole("admin"), async (req, res) =
   try {
     await createBillFromData({
       customerData: { phone: order.customer.phone, name: order.customer.name, email: order.customer.email },
-      items: order.items.map(it => ({ product: it.product, variantId: it.variantId, quantity: it.quantity })),
+      items: order.items.map(it => ({ product: it.product, variantSku: it.variantSku, quantity: it.quantity })),
       paymentType: "CASH",
       existingOrderId: order._id
     });
@@ -898,7 +906,7 @@ router.patch("/:id/approve-cash", auth, requireRole("admin"), async (req, res) =
       items: order.items.map(it => ({ 
         product: it.product, 
         quantity: it.quantity,
-        variantId: it.variantId 
+        variantSku: it.variantSku 
       })),
       paymentType: order.paymentMethod,
       existingOrderId: order._id
