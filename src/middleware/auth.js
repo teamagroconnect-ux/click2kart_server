@@ -44,7 +44,8 @@ export const requirePermission = (permission) => (req, res, next) => {
   // Staff check
   if (req.user.role === "staff") {
     const perms = req.user.permissions || [];
-    if (perms.includes(permission)) return next();
+    const required = Array.isArray(permission) ? permission : [permission];
+    if (required.some(p => perms.includes(p))) return next();
     return res.status(403).json({ error: "permission_denied" });
   }
   

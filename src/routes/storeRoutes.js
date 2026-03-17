@@ -5,7 +5,7 @@ import Store from "../models/Store.js";
 
 const router = express.Router();
 
-router.get("/", auth, requirePermission("stores"), async (req, res) => {
+router.get("/", auth, requirePermission(["stores", "products", "inventory"]), async (req, res) => {
   const items = await Store.find({}).sort({ name: 1 });
   res.json(items);
 });
