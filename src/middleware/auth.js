@@ -24,21 +24,31 @@ export const requireRole = (role) => (req, res, next) => {
   if (!req.user) return res.status(403).json({ error: "forbidden" });
   
   const userRole = req.user.role;
-  
-  // Admin bypass: Admin can do anything
   if (userRole === "admin") return next();
-  
-  // If explicitly looking for staff role
-  if (role === "staff" && userRole === "staff") return next();
-  
-  // If explicitly looking for customer role
-  if (role === "customer" && userRole === "customer") return next();
 
-  // If role is admin and user is staff, they are forbidden (unless they have specific permissions, 
-  // but those are handled at the route level usually or via a separate permission check middleware)
-  if (userRole !== role) return res.status(403).json({ error: "forbidden" });
+  if (Array.isArray(role)) {
+    if (role.includes(userRole)) return next();
+  } else if (userRole === role) {
+    return next();
+  }
   
-  next();
+  return res.status(403).json({ error: "forbidden" });
+};
+
+export const requirePermission = (permission) => (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: "unauthorized" });
+  
+  // Admin bypass
+  if (req.user.role === "admin") return next();
+  
+  // Staff check
+  if (req.user.role === "staff") {
+    const perms = req.user.permissions || [];
+    if (perms.includes(permission)) return next();
+    return res.status(403).json({ error: "permission_denied" });
+  }
+  
+  return res.status(403).json({ error: "forbidden" });
 };
 
 export const requirePermission = (permission) => (req, res, next) => {

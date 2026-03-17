@@ -1,6 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import Product from "../models/Product.js";
 import Order from "../models/Order.js";
 import StockTxn from "../models/StockTxn.js";
@@ -9,7 +9,7 @@ import AuditLog from "../models/AuditLog.js";
 const router = express.Router();
 
 // Stock IN: increase product stock and log entry
-router.post("/in", auth, requireRole("admin"), async (req, res) => {
+router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
   const { productId, variantSku, quantity, note } = req.body || {};
   if (!mongoose.isValidObjectId(productId)) return res.status(400).json({ error: "invalid_product" });
   const qty = Number(quantity);
@@ -68,7 +68,7 @@ router.post("/in", auth, requireRole("admin"), async (req, res) => {
 });
 
 // History: list recent stock-in records
-router.get("/history", auth, requireRole("admin"), async (req, res) => {
+router.get("/history", auth, requirePermission("inventory"), async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const items = await StockTxn.find({ type: "ADDED" })
@@ -92,7 +92,7 @@ router.get("/history", auth, requireRole("admin"), async (req, res) => {
 });
 
 // Summary analytics
-router.get("/summary", auth, requireRole("admin"), async (req, res) => {
+router.get("/summary", auth, requirePermission("inventory"), async (req, res) => {
   const days = Math.min(90, Math.max(7, parseInt(req.query.days) || 30));
   const from = new Date();
   from.setHours(0, 0, 0, 0);
@@ -164,7 +164,7 @@ router.get("/summary", auth, requireRole("admin"), async (req, res) => {
 export default router;
 
 // Overview: total, reserved, available per SKU
-router.get("/overview", auth, requireRole("admin"), async (req, res) => {
+router.get("/overview", auth, requirePermission("inventory"), async (req, res) => {
   const reservedAgg = await Order.aggregate([
     { $match: { status: { $in: ["NEW", "PENDING_CASH_APPROVAL", "CONFIRMED"] } } },
     { $unwind: "$items" },

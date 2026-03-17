@@ -1,5 +1,5 @@
 import express from "express";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
 import Bill from "../models/Bill.js";
@@ -133,7 +133,7 @@ router.get("/settings", auth, requireRole("admin"), (req, res) => {
   });
 });
 
-router.get("/customers", auth, requireRole("admin"), async (req, res) => {
+router.get("/customers", auth, requirePermission("customers"), async (req, res) => {
   const { q } = req.query;
   const filter = {};
   if (q) {
@@ -146,7 +146,7 @@ router.get("/customers", auth, requireRole("admin"), async (req, res) => {
   res.json(items);
 });
 
-router.get("/customers/:id", auth, requireRole("admin"), async (req, res) => {
+router.get("/customers/:id", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
   const user = await Customer.findById(id).select("-password");
   if (!user) return res.status(404).json({ error: "not_found" });
@@ -164,7 +164,7 @@ router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => 
   res.json({ deleted: true });
 });
 
-router.post("/customers/:id/approve", auth, requireRole("admin"), async (req, res) => {
+router.post("/customers/:id/approve", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
   const updated = await Customer.findByIdAndUpdate(id, { isActive: true }, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
@@ -220,7 +220,7 @@ router.get("/analytics/top-buyers", auth, requireRole("admin"), async (req, res)
 export default router;
 
 // Revenue summary: totals and leaders
-router.get("/revenue/summary", auth, requireRole("admin"), async (req, res) => {
+router.get("/revenue/summary", auth, requirePermission("dashboard"), async (req, res) => {
   const Order = (await import("../models/Order.js")).default;
   const paidStatuses = ["PAID", "PARTIAL"];
   const now = new Date();

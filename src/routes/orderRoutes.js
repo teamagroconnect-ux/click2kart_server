@@ -4,7 +4,7 @@ import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
 import Coupon from "../models/Coupon.js";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import { computeTotals } from "../lib/invoice.js";
 import razorpay from "../lib/razorpay.js";
 import crypto from "crypto";
@@ -684,7 +684,7 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
 });
 
 // Admin approve manual payment
-router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res) => {
+router.patch("/:id/approve-manual", auth, requirePermission("orders"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
@@ -777,7 +777,7 @@ router.patch("/:id/approve-manual", auth, requireRole("admin"), async (req, res)
 });
 
 // Admin reject manual payment
-router.patch("/:id/reject-manual", auth, requireRole("admin"), async (req, res) => {
+router.patch("/:id/reject-manual", auth, requirePermission("orders"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
@@ -819,7 +819,7 @@ router.patch("/:id/reject-manual", auth, requireRole("admin"), async (req, res) 
 });
 
 // Get manual payment verification history
-router.get("/payment-history", auth, requireRole("admin"), async (req, res) => {
+router.get("/payment-history", auth, requirePermission("orders"), async (req, res) => {
   try {
     const logs = await AuditLog.find({ type: "PAYMENT_VERIFICATION" })
       .sort({ createdAt: -1 })
@@ -844,7 +844,7 @@ router.get("/payment-history", auth, requireRole("admin"), async (req, res) => {
 });
 
 // Finalize COD and generate bill (admin)
-router.patch("/:id/finalize-cod", auth, requireRole("admin"), async (req, res) => {
+router.patch("/:id/finalize-cod", auth, requirePermission("orders"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
@@ -874,7 +874,7 @@ router.patch("/:id/finalize-cod", auth, requireRole("admin"), async (req, res) =
 });
 
 // Admin approves Manual/Offline Payment
-router.patch("/:id/approve-cash", auth, requireRole("admin"), async (req, res) => {
+router.patch("/:id/approve-cash", auth, requirePermission("orders"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
@@ -932,7 +932,7 @@ router.get("/my", auth, requireRole("customer"), async (req, res) => {
   res.json(items);
 });
 
-router.get("/", auth, requireRole("admin"), async (req, res) => {
+router.get("/", auth, requirePermission("orders"), async (req, res) => {
   const status = req.query.status;
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
@@ -947,7 +947,7 @@ router.get("/", auth, requireRole("admin"), async (req, res) => {
   res.json({ page, limit, count: items.length, items });
 });
 
-router.get("/:id", auth, requireRole("admin"), async (req, res) => {
+router.get("/:id", auth, requirePermission("orders"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const doc = await Order.findById(req.params.id);
   if (!doc) return res.status(404).json({ error: "not_found" });

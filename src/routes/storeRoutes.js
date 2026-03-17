@@ -1,16 +1,16 @@
 import express from "express";
 import mongoose from "mongoose";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import Store from "../models/Store.js";
 
 const router = express.Router();
 
-router.get("/", auth, requireRole("admin"), async (req, res) => {
+router.get("/", auth, requirePermission("stores"), async (req, res) => {
   const items = await Store.find({}).sort({ name: 1 });
   res.json(items);
 });
 
-router.post("/", auth, requireRole("admin"), async (req, res) => {
+router.post("/", auth, requirePermission("stores"), async (req, res) => {
   const name = (req.body?.name || "").toString().trim();
   if (!name) return res.status(400).json({ error: "missing_name" });
   const exists = await Store.findOne({ name });
@@ -19,7 +19,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
   res.status(201).json(doc);
 });
 
-router.put("/:id", auth, requireRole("admin"), async (req, res) => {
+router.put("/:id", auth, requirePermission("stores"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const payload = {};
   if (req.body?.name != null) payload.name = String(req.body.name).trim();
@@ -29,7 +29,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   res.json(updated);
 });
 
-router.post("/:id/sections", auth, requireRole("admin"), async (req, res) => {
+router.post("/:id/sections", auth, requirePermission("stores"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const section = (req.body?.name || "").toString().trim();
   if (!section) return res.status(400).json({ error: "missing_section" });
@@ -40,7 +40,7 @@ router.post("/:id/sections", auth, requireRole("admin"), async (req, res) => {
   res.status(201).json(doc);
 });
 
-router.delete("/:id/sections", auth, requireRole("admin"), async (req, res) => {
+router.delete("/:id/sections", auth, requirePermission("stores"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const section = (req.body?.name || "").toString().trim();
   const doc = await Store.findById(req.params.id);

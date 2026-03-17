@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import Product from "../models/Product.js";
 import AuditLog from "../models/AuditLog.js";
 import Category from "../models/Category.js";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import StockTxn from "../models/StockTxn.js";
 import Bill from "../models/Bill.js";
 import Review from "../models/Review.js";
