@@ -1,7 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Order from "../models/Order.js";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import fetch from "node-fetch";
 import { checkServiceability as svcCheck } from "../services/delhivery.service.js";
 import PDFDocument from "pdfkit";
@@ -196,7 +196,7 @@ router.get("/delhivery/serviceability", async (req, res) => {
 });
 
 // Generate waybill
-router.post("/delhivery/waybill", auth, requireRole("admin"), async (req, res) => {
+router.post("/delhivery/waybill", auth, requirePermission("orders"), async (req, res) => {
   const base = getBase();
   const token = getToken();
   if (!base || !token) return res.status(500).json({ error: "delhivery_not_configured" });
@@ -216,7 +216,7 @@ router.post("/delhivery/waybill", auth, requireRole("admin"), async (req, res) =
   }
 });
 
-router.post("/delhivery/create", auth, requireRole("admin"), async (req, res) => {
+router.post("/delhivery/create", auth, requirePermission("orders"), async (req, res) => {
   const { orderId, address, waybill: providedWaybill } = req.body || {};
   if (!mongoose.isValidObjectId(orderId)) return res.status(400).json({ error: "invalid_id" });
   const order = await Order.findById(orderId);
@@ -308,7 +308,7 @@ router.get("/delhivery/track/:waybill", async (req, res) => {
   res.json({ waybill, status: "IN_TRANSIT", last_update: new Date().toISOString() });
 });
 
-router.get("/delhivery/label/:waybill", async (req, res) => {
+router.get("/delhivery/label/:waybill", auth, requirePermission("orders"), async (req, res) => {
   const waybill = req.params.waybill;
   const order = await Order.findOne({ "shipping.waybill": waybill }).lean();
   const doc = new PDFDocument({ margin: 24, size: "A6" });
@@ -334,7 +334,7 @@ router.get("/delhivery/label/:waybill", async (req, res) => {
   doc.end();
 });
 
-router.post("/delhivery/pickup", auth, requireRole("admin"), async (req, res) => {
+router.post("/delhivery/pickup", auth, requirePermission("orders"), async (req, res) => {
   const apiUrl = process.env.DELHIVERY_PICKUP_API_URL || "";
   const token = getToken();
   const payload = req.body || {};
@@ -354,7 +354,7 @@ router.post("/delhivery/pickup", auth, requireRole("admin"), async (req, res) =>
 });
 
 // Cancel Shipment
-router.post("/delhivery/cancel", auth, requireRole("admin"), async (req, res) => {
+router.post("/delhivery/cancel", auth, requirePermission("orders"), async (req, res) => {
   const { waybill, reason } = req.body || {};
   if (!waybill) return res.status(400).json({ error: "missing_waybill" });
   const base = getBase();
@@ -374,7 +374,7 @@ router.post("/delhivery/cancel", auth, requireRole("admin"), async (req, res) =>
   }
 });
 
-router.get("/delhivery/pod/:waybill", async (req, res) => {
+router.get("/delhivery/pod/:waybill", auth, requirePermission("orders"), async (req, res) => {
   const url = process.env.DELHIVERY_POD_URL || "";
   const token = getToken();
   const waybill = req.params.waybill;

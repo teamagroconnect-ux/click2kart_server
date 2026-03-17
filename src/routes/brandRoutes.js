@@ -1,11 +1,11 @@
 import express from "express";
 import mongoose from "mongoose";
 import Brand from "../models/Brand.js";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.post("/", auth, requireRole("admin"), async (req, res) => {
+router.post("/", auth, requirePermission("products"), async (req, res) => {
   const { name, slug, logo } = req.body || {};
   if (!name || !slug) return res.status(400).json({ error: "missing_fields" });
   

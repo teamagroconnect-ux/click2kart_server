@@ -1,7 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Category from "../models/Category.js";
-import { auth, requireRole } from "../middleware/auth.js";
+import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 
 const router = express.Router();
 
