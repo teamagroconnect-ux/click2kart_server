@@ -18,6 +18,11 @@ router.post("/in", auth, requireRole("admin"), async (req, res) => {
   const doc = await Product.findById(productId);
   if (!doc || !doc.isActive) return res.status(404).json({ error: "not_found" });
 
+  // If product has variants, variantSku MUST be provided
+  if (doc.variants && doc.variants.length > 0 && !variantSku) {
+    return res.status(400).json({ error: "variant_sku_required" });
+  }
+
   let before = 0;
   let after = 0;
 

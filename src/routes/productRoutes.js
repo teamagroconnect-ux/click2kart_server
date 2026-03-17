@@ -175,7 +175,11 @@ router.get("/low-stock", auth, requireRole("admin"), async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const item = await Product.findById(req.params.id);
+  const item = await Product.findById(req.params.id)
+    .populate("brand", "name")
+    .populate("category", "name")
+    .populate("subCategory", "name");
+  
   if (!item || !item.isActive) return res.status(404).json({ error: "not_found" });
   const canViewPrice = isViewerAuthorized(req);
   res.json(sanitizeProduct(item, canViewPrice));
