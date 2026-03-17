@@ -51,14 +51,3 @@ export const requirePermission = (permission) => (req, res, next) => {
   return res.status(403).json({ error: "forbidden" });
 };
 
-export const requirePermission = (permission) => (req, res, next) => {
-  if (!req.user) return res.status(403).json({ error: "forbidden" });
-  if (req.user.role === "admin") return next();
-  
-  if (req.user.role === "staff" && req.user.permissions?.includes(permission)) {
-    return next();
-  }
-  
-  return res.status(403).json({ error: "insufficient_permissions" });
-};
-
