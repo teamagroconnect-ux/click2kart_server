@@ -5,7 +5,7 @@ import { auth, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.post("/", auth, requireRole("admin"), async (req, res) => {
+router.post("/", auth, requirePermission("products"), async (req, res) => {
   const { name, slug, brandId, image, description, attributes } = req.body || {};
   if (!name || !slug) return res.status(400).json({ error: "missing_fields" });
   

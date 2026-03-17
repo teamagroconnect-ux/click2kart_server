@@ -61,12 +61,42 @@ router.delete("/staff/:id", auth, requireRole("admin"), async (req, res) => {
 });
 
 router.get("/stats", auth, async (req, res) => {
-  // Staff can also see basic stats, but maybe filtered based on permissions in the future
-  // For now, let both admin and staff access this route if authenticated
   const Order = (await import("../models/Order.js")).default;
   const threshold = Number(process.env.LOW_STOCK_THRESHOLD ?? 5);
-  const [totalProducts, totalCustomers, pendingCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
-    Product.countDocuments({ isActive: true }),
+  
+  // Aggregate inventory stats directly in DB for efficiency
+  const invStats = await Product.aggregate([
+    { $match: { isActive: true } },
+    {
+      $project: {
+        skus: {
+          $cond: {
+            if: { $and: [{ $isArray: "$variants" }, { $gt: [{ $size: "$variants" }, 0] }] },
+            then: {
+              $filter: {
+                input: "$variants",
+                as: "v",
+                cond: { $ne: ["$$v.isActive", false] }
+              }
+            },
+            else: [{ stock: "$stock", isActive: true }]
+          }
+        }
+      }
+    },
+    { $unwind: "$skus" },
+    {
+      $group: {
+        _id: null,
+        totalSkus: { $sum: 1 },
+        totalUnits: { $sum: "$skus.stock" },
+        outOfStock: { $sum: { $cond: [{ $eq: ["$skus.stock", 0] }, 1, 0] } },
+        lowStockCount: { $sum: { $cond: [{ $and: [{ $gt: ["$skus.stock", 0] }, { $lte: ["$skus.stock", threshold] }] }, 1, 0] } }
+      }
+    }
+  ]);
+
+  const [totalCustomers, pendingCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
     Customer.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: false }),
     Bill.countDocuments({}),
@@ -84,7 +114,9 @@ router.get("/stats", auth, async (req, res) => {
     Order.countDocuments({ status: "PENDING_ADMIN_APPROVAL" })
   ]);
 
-  // Flatten low stock to SKU level for the dashboard
+  const inv = invStats[0] || { totalSkus: 0, totalUnits: 0, outOfStock: 0, lowStockCount: 0 };
+
+  // Flatten low stock to SKU level
   const lowStock = [];
   lowStockProducts.forEach(p => {
     if (p.variants && p.variants.length > 0) {
@@ -112,7 +144,10 @@ router.get("/stats", auth, async (req, res) => {
   });
 
   res.json({ 
-    totalProducts, 
+    totalProducts: inv.totalSkus, 
+    totalUnits: inv.totalUnits,
+    outOfStock: inv.outOfStock,
+    lowStockCount: inv.lowStockCount,
     totalCustomers, 
     pendingCustomers, 
     totalBills, 

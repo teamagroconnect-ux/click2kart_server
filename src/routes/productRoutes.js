@@ -132,7 +132,7 @@ router.get("/", async (req, res) => {
   res.json({ page, limit, total, items: safeItems });
 });
 
-router.get("/low-stock", auth, requireRole("admin"), async (req, res) => {
+router.get("/low-stock", auth, requirePermission("inventory"), async (req, res) => {
   const threshold = Number(req.query.threshold ?? 5);
   const t = Number.isFinite(threshold) && threshold >= 0 ? threshold : 5;
   const items = await Product.find({ 
@@ -247,7 +247,7 @@ router.get("/recommend", async (req, res) => {
   res.json({ items: pick.map((it) => sanitizeProduct(it, canViewPrice)) });
 });
 
-router.post("/", auth, requireRole("admin"), async (req, res) => {
+router.post("/", auth, requirePermission("products"), async (req, res) => {
   const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
@@ -316,7 +316,7 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
   res.status(201).json(doc);
 });
 
-router.put("/:id", auth, requireRole("admin"), async (req, res) => {
+router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const allowed = ["name", "description", "highlights", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section"];
   const payload = {};
@@ -441,7 +441,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
 });
 
 // Variant operations
-router.post("/:id/variants", auth, requireRole("admin"), async (req, res) => {
+router.post("/:id/variants", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const p = await Product.findById(req.params.id);
   if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
@@ -487,7 +487,7 @@ router.post("/:id/variants", auth, requireRole("admin"), async (req, res) => {
   res.status(201).json(newVar);
 });
 
-router.put("/:id/variants/:vid", auth, requireRole("admin"), async (req, res) => {
+router.put("/:id/variants/:vid", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const p = await Product.findById(req.params.id);
   if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
@@ -547,7 +547,7 @@ router.put("/:id/variants/:vid", auth, requireRole("admin"), async (req, res) =>
   res.json(v);
 });
 
-router.patch("/:id/variants/:vid/stock", auth, requireRole("admin"), async (req, res) => {
+router.patch("/:id/variants/:vid/stock", auth, requirePermission("inventory"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const qty = Number(req.body?.quantity);
   if (!Number.isInteger(qty) || qty <= 0) return res.status(400).json({ error: "invalid_quantity" });
@@ -570,14 +570,14 @@ router.patch("/:id/variants/:vid/stock", auth, requireRole("admin"), async (req,
   res.json({ id: v._id.toString(), stock: v.stock });
 });
 
-router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
+router.delete("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const updated = await Product.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json({ success: true });
 });
 
-router.patch("/:id/stock", auth, requireRole("admin"), async (req, res) => {
+router.patch("/:id/stock", auth, requirePermission("inventory"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const qty = Number(req.body?.quantity);
   if (!Number.isInteger(qty) || qty <= 0) return res.status(400).json({ error: "invalid_quantity" });
@@ -591,7 +591,7 @@ router.patch("/:id/stock", auth, requireRole("admin"), async (req, res) => {
   res.json({ id: doc._id.toString(), stock: doc.stock });
 });
 
-router.get("/:id/stock-history", auth, requireRole("admin"), async (req, res) => {
+router.get("/:id/stock-history", auth, requirePermission("inventory"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
