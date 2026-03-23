@@ -248,7 +248,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requirePermission("products"), async (req, res) => {
-  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode } = req.body || {};
+  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
   if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
@@ -262,6 +262,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     name: String(name).trim(),
     description: description || "",
     price: Number(price),
+    sku: sku ? String(sku).trim() : undefined,
     hsnCode: hsnCode ? String(hsnCode).trim() : "",
     brand: brandId || null,
     category: categoryId,
@@ -319,7 +320,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
 
 router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode"];
+  const allowed = ["name", "description", "highlights", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   

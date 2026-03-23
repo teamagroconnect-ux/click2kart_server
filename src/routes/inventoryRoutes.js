@@ -43,7 +43,7 @@ router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
   await doc.save();
   await StockTxn.create({
     product: doc._id,
-    variantSku: variantSku ? String(variantSku) : undefined,
+    variantSku: variantSku ? String(variantSku) : doc.sku,
     type: "ADDED",
     quantity: qty,
     before,
@@ -80,6 +80,7 @@ router.get("/history", auth, requirePermission("inventory"), async (req, res) =>
     id: x._id.toString(),
     productId: x.product?._id?.toString?.() || "",
     productName: x.product?.name || "",
+    variantSku: x.variantSku || "",
     store: x.product?.store || "",
     section: x.product?.section || "",
     quantity: x.quantity,
@@ -177,7 +178,7 @@ router.get("/overview", auth, requirePermission("inventory"), async (req, res) =
     reservedMap.set(key, x.reserved || 0);
   });
 
-  const prods = await Product.find({ isActive: true }).select("name stock variants");
+  const prods = await Product.find({ isActive: true }).select("name stock variants sku");
   const items = [];
   const threshold = Number(process.env.LOW_STOCK_THRESHOLD ?? 5);
 
@@ -190,7 +191,8 @@ router.get("/overview", auth, requirePermission("inventory"), async (req, res) =
           const available = Math.max(0, (v.stock || 0) - reserved);
           items.push({
             id: `${p._id}_${v.sku}`,
-            name: `${p.name} (${v.sku || 'No SKU'})`,
+            name: p.name,
+            sku: v.sku,
             total: v.stock || 0,
             reserved,
             available,
@@ -205,6 +207,7 @@ router.get("/overview", auth, requirePermission("inventory"), async (req, res) =
       items.push({
         id: p._id.toString(),
         name: p.name,
+        sku: p.sku || '',
         total: p.stock || 0,
         reserved,
         available,

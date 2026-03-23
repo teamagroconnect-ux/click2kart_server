@@ -10,6 +10,7 @@ const productSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
     price: { type: Number, required: true, min: 0 },
+    sku: { type: String, trim: true, index: true }, // Top-level SKU for simple products
     hsnCode: { type: String, default: "" },
     brand: { type: mongoose.Schema.Types.ObjectId, ref: "Brand", default: null, index: true },
     category: { type: mongoose.Schema.Types.ObjectId, ref: "Category", required: true, index: true },

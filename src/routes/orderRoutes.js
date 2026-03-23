@@ -481,13 +481,13 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       if (it.variantSku) {
         // Variant stock update
         await Product.updateOne(
-          { _id: it.product, "variants.sku": String(it.variantSku) },
+          { _id: it.productId, "variants.sku": String(it.variantSku) },
           { $inc: { "variants.$.stock": -qty } }
         );
       } else {
         // Regular product stock update
         await Product.updateOne(
-          { _id: it.product },
+          { _id: it.productId },
           { $inc: { stock: -qty } }
         );
       }
