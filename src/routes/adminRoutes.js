@@ -254,37 +254,103 @@ router.get("/analytics/top-buyers", auth, requireRole("admin"), async (req, res)
 
 export default router;
 
-// Revenue summary: totals and leaders
-router.get("/revenue/summary", auth, requirePermission("dashboard"), async (req, res) => {
+// Revenue and Top Products Summary
+router.get("/revenue/summary", auth, requireRole("admin"), async (req, res) => {
   const Order = (await import("../models/Order.js")).default;
-  const paidStatuses = ["PAID", "PARTIAL"];
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const totalAgg = await Order.aggregate([
-    { $match: { paymentStatus: { $in: paidStatuses } } },
-    { $group: { _id: null, sum: { $sum: "$totalEstimate" } } }
-  ]);
-  const monthAgg = await Order.aggregate([
-    { $match: { paymentStatus: { $in: paidStatuses }, createdAt: { $gte: startOfMonth } } },
-    { $group: { _id: null, sum: { $sum: "$totalEstimate" } } }
-  ]);
-  const pendingOrders = await Order.countDocuments({ status: { $in: ["NEW", "PENDING_CASH_APPROVAL"] } });
-  const topProducts = await Order.aggregate([
-    { $unwind: "$items" },
-    { $group: { _id: "$items.name", revenue: { $sum: "$items.lineTotal" }, qty: { $sum: "$items.quantity" } } },
-    { $sort: { revenue: -1 } },
-    { $limit: 5 }
-  ]);
-  const topBuyers = await Order.aggregate([
-    { $group: { _id: "$customer.phone", name: { $last: "$customer.name" }, total: { $sum: "$totalEstimate" } } },
-    { $sort: { total: -1 } },
-    { $limit: 5 }
-  ]);
-  res.json({
-    totalRevenue: totalAgg[0]?.sum || 0,
-    thisMonthRevenue: monthAgg[0]?.sum || 0,
-    pendingOrders,
-    topProducts: topProducts.map(x => ({ name: x._id, revenue: x.revenue, quantity: x.qty })),
-    topBuyers: topBuyers.map(x => ({ phone: x._id, name: x.name, total: x.total }))
-  });
+  try {
+    const totalAgg = await Order.aggregate([
+      { $match: { status: { $nin: ["CANCELLED", "PENDING_PAYMENT"] } } },
+      { $group: { _id: null, total: { $sum: "$totalEstimate" }, count: { $sum: 1 } } }
+    ]);
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthAgg = await Order.aggregate([
+      { $match: { status: { $nin: ["CANCELLED", "PENDING_PAYMENT"] }, createdAt: { $gte: startOfMonth } } },
+      { $group: { _id: null, total: { $sum: "$totalEstimate" } } }
+    ]);
+
+    const pendingCount = await Order.countDocuments({ status: "NEW" });
+
+    // Top Products Aggregation (PRODUCT-BASED - User requested)
+    const topProductsAgg = await Order.aggregate([
+      { $match: { status: { $nin: ["CANCELLED", "PENDING_PAYMENT"] } } },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: "$items.product",
+          name: { $first: "$items.name" },
+          revenue: { $sum: "$items.lineTotal" },
+          quantity: { $sum: "$items.quantity" }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 5 }
+    ]);
+
+    const topBuyersAgg = await Order.aggregate([
+      { $match: { status: { $nin: ["CANCELLED", "PENDING_PAYMENT"] } } },
+      {
+        $group: {
+          _id: "$customer.phone",
+          name: { $first: "$customer.name" },
+          phone: { $first: "$customer.phone" },
+          total: { $sum: "$totalEstimate" }
+        }
+      },
+      { $sort: { total: -1 } },
+      { $limit: 5 }
+    ]);
+
+    res.json({
+      totalRevenue: totalAgg[0]?.total || 0,
+      totalOrders: totalAgg[0]?.count || 0,
+      thisMonthRevenue: monthAgg[0]?.total || 0,
+      pendingOrders: pendingCount,
+      topProducts: topProductsAgg.map(p => ({
+        id: p._id,
+        name: p.name,
+        revenue: p.revenue,
+        quantity: p.quantity
+      })),
+      topBuyers: topBuyersAgg
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// SKU Breakdown for a specific Product
+router.get("/revenue/product/:id/skus", auth, requireRole("admin"), async (req, res) => {
+  const Order = (await import("../models/Order.js")).default;
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  
+  try {
+    const skuAgg = await Order.aggregate([
+      { $match: { status: { $nin: ["CANCELLED", "PENDING_PAYMENT"] } } },
+      { $unwind: "$items" },
+      { $match: { "items.product": new mongoose.Types.ObjectId(req.params.id) } },
+      {
+        $group: {
+          _id: "$items.variantSku",
+          name: { $first: "$items.name" },
+          revenue: { $sum: "$items.lineTotal" },
+          quantity: { $sum: "$items.quantity" }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 5 }
+    ]);
+
+    res.json({
+      productId: req.params.id,
+      skus: skuAgg.map(s => ({
+        sku: s._id || "No SKU",
+        revenue: s.revenue,
+        quantity: s.quantity
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
