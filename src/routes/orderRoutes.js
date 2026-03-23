@@ -298,10 +298,38 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   });
 
   if (couponId) {
-    await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
-  }
+      await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
+    }
 
-  if (paymentMethod === "CASH") {
+    // --- STOCK MANAGEMENT ---
+    for (const it of items) {
+      const qty = Number(it.quantity || 0);
+      if (it.variantSku) {
+        // Variant stock update
+        await Product.updateOne(
+          { _id: it.productId, "variants.sku": String(it.variantSku) },
+          { $inc: { "variants.$.stock": -qty } }
+        );
+      } else {
+        // Regular product stock update
+        await Product.updateOne(
+          { _id: it.productId },
+          { $inc: { stock: -qty } }
+        );
+      }
+    }
+    // Sync total product stock (sum of variants)
+    for (const id of ids) {
+      const p = await Product.findById(id);
+      if (p && p.variants && p.variants.length > 0) {
+        const sum = p.variants.filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
+        p.stock = sum;
+        await p.save();
+      }
+    }
+    // ------------------------
+
+    if (paymentMethod === "CASH") {
     notifyAdmin("new_offline_order", doc);
     try {
       const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
@@ -446,6 +474,35 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
     if (couponId) {
       await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
     }
+
+    // --- STOCK MANAGEMENT ---
+    for (const it of items) {
+      const qty = Number(it.quantity || 0);
+      if (it.variantSku) {
+        // Variant stock update
+        await Product.updateOne(
+          { _id: it.product, "variants.sku": String(it.variantSku) },
+          { $inc: { "variants.$.stock": -qty } }
+        );
+      } else {
+        // Regular product stock update
+        await Product.updateOne(
+          { _id: it.product },
+          { $inc: { stock: -qty } }
+        );
+      }
+    }
+    // Sync total product stock (sum of variants)
+    for (const id of ids) {
+      const p = await Product.findById(id);
+      if (p && p.variants && p.variants.length > 0) {
+        const sum = p.variants.filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
+        p.stock = sum;
+        await p.save();
+      }
+    }
+    // ------------------------
+
     // Billing only for full online payments
     if (paymentMethod === "RAZORPAY") {
       try {
