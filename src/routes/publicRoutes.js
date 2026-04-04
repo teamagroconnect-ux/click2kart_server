@@ -6,6 +6,8 @@ import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
 import Partner from "../models/Partner.js";
 import { sendOTP } from "../lib/mailer.js";
+import { getOrSetCache, getCacheVersion } from "../lib/redis.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 
 const router = express.Router();
 
@@ -82,12 +84,14 @@ async function computeSummaryForPartner(partner) {
 }
 
 router.get("/categories", async (req, res) => {
-  const items = await Category.find({ isActive: true }).sort({ name: 1 }).select({ name: 1, description: 1 });
+  const items = await getOrSetCache("categories:all", async () => {
+    return await Category.find({ isActive: true }).sort({ name: 1 }).select({ name: 1, description: 1 });
+  }, 86400); // 24 hours
   res.json(items);
 });
 
 // Send OTP for Partner Login (via Email)
-router.post("/partner/send-otp", async (req, res) => {
+router.post("/partner/send-otp", rateLimit("partner-send-otp", 3, 600), async (req, res) => {
   const email = String(req.body.email || "").toLowerCase().trim();
   if (!email || !validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
@@ -109,7 +113,7 @@ router.post("/partner/send-otp", async (req, res) => {
 });
 
 // Partner Login (via Email + Password/OTP)
-router.post("/partner/login", async (req, res) => {
+router.post("/partner/login", rateLimit("partner-login", 10, 600), async (req, res) => {
   const email = String(req.body.email || "").toLowerCase().trim();
   const { password, otp } = req.body || {};
   
@@ -169,7 +173,11 @@ router.get("/partner/me", (await import("../middleware/auth.js")).auth, async (r
   if (req.user.role !== 'partner') return res.status(403).json({ error: 'forbidden' });
   const partner = await Partner.findById(req.user.id);
   if (!partner || !partner.isActive) return res.status(404).json({ error: "not_found" });
-  const summary = await computeSummaryForPartner(partner);
+  
+  const summary = await getOrSetCache(`partner:summary:${partner._id}`, async () => {
+    return await computeSummaryForPartner(partner);
+  }, 900); // 15 minutes
+  
   res.json(summary);
 });
 

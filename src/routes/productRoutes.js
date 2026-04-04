@@ -8,6 +8,7 @@ import StockTxn from "../models/StockTxn.js";
 import Bill from "../models/Bill.js";
 import Review from "../models/Review.js";
 import jwt from "jsonwebtoken";
+import { getOrSetCache, delCache, getCacheVersion, bumpCacheVersion } from "../lib/redis.js";
 
 const router = express.Router();
 
@@ -60,43 +61,52 @@ router.get("/grouped", async (req, res) => {
   const connected = mongoose.connection.readyState === 1;
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
 
-  const query = { isActive: true };
-  if (req.query.brand) {
-    if (mongoose.isValidObjectId(req.query.brand)) query.brand = new mongoose.Types.ObjectId(req.query.brand);
-  }
-  if (req.query.category) {
-    if (mongoose.isValidObjectId(req.query.category)) query.category = new mongoose.Types.ObjectId(req.query.category);
-  }
-
-  const pipeline = [
-    { $match: query },
-    { $sort: { createdAt: -1 } },
-    {
-      $group: {
-        _id: "$category",
-        products: { $push: "$$ROOT" }
-      }
-    },
-    {
-      $lookup: {
-        from: "categories",
-        localField: "_id",
-        foreignField: "_id",
-        as: "categoryInfo"
-      }
-    },
-    { $unwind: "$categoryInfo" },
-    { $sort: { "categoryInfo.name": 1 } }
-  ];
-
-  const groupedResults = await Product.aggregate(pipeline);
-  
+  const { brand, category } = req.query;
   const canViewPrice = isViewerAuthorized(req);
   
-  const formatted = groupedResults.map(group => ({
-    category: group.categoryInfo,
-    items: group.products.map(p => sanitizeProduct(p, canViewPrice))
-  }));
+  // Get current version for grouped products to avoid slow pattern deletes
+  const version = await getCacheVersion("products:grouped");
+  
+  // Create a unique key for the cache with versioning
+  const cacheKey = `products:grouped:v${version}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
+
+  const formatted = await getOrSetCache(cacheKey, async () => {
+    const query = { isActive: true };
+    if (brand && mongoose.isValidObjectId(brand)) {
+      query.brand = new mongoose.Types.ObjectId(brand);
+    }
+    if (category && mongoose.isValidObjectId(category)) {
+      query.category = new mongoose.Types.ObjectId(category);
+    }
+
+    const pipeline = [
+      { $match: query },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$category",
+          products: { $push: "$$ROOT" }
+        }
+      },
+      {
+        $lookup: {
+          from: "categories",
+          localField: "_id",
+          foreignField: "_id",
+          as: "categoryInfo"
+        }
+      },
+      { $unwind: "$categoryInfo" },
+      { $sort: { "categoryInfo.name": 1 } }
+    ];
+
+    const groupedResults = await Product.aggregate(pipeline);
+    
+    return groupedResults.map(group => ({
+      category: group.categoryInfo,
+      items: group.products.map(p => sanitizeProduct(p, canViewPrice))
+    }));
+  }, 3600); // 1 hour
 
   res.json(formatted);
 });
@@ -315,6 +325,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
       }
     }
   } catch {}
+  await bumpCacheVersion("products:grouped");
   res.status(201).json(doc);
 });
 
@@ -439,6 +450,7 @@ router.put("/:id", auth, requirePermission("products"), async (req, res) => {
       });
     }
   } catch {}
+  await bumpCacheVersion("products:grouped");
   res.json(updated);
 });
 

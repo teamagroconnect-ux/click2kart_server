@@ -3,6 +3,7 @@ import cors from "cors";
 import morgan from "morgan";
 import dotenv from "dotenv";
 import { connectIfConfigured } from "./lib/db.js";
+import { connectRedis } from "./lib/redis.js";
 import http from "http";
 import { initSocket } from "./lib/socket.js";
 import Admin from "./models/Admin.js";
@@ -86,6 +87,7 @@ const ensureDefaultAdmin = async () => {
 
 const start = async () => {
   await connectIfConfigured();
+  await connectRedis();
   await ensureDefaultAdmin();
   const server = http.createServer(app);
   initSocket(server);

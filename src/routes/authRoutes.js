@@ -4,6 +4,7 @@ import Admin from "../models/Admin.js";
 import Customer from "../models/Customer.js";
 import OTP from "../models/OTP.js";
 import { sendOTP, sendEmail } from "../lib/mailer.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ const validateEmailFormat = (email) => {
 };
 
 // ADMIN LOGIN
-router.post("/login", async (req, res) => {
+router.post("/login", rateLimit("admin-login", 5, 900), async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing_fields" });
   if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
@@ -53,19 +54,13 @@ router.post("/login", async (req, res) => {
 });
 
 // CUSTOMER SIGNUP - Step 1: Send OTP
-router.post("/customer/signup", async (req, res) => {
+router.post("/customer/signup", rateLimit("customer-signup", 3, 600), async (req, res) => {
   const { name, email, phone, password } = req.body || {};
   if (!name || !email || !phone || !password) return res.status(400).json({ error: "missing_fields" });
   if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
   const exists = await Customer.findOne({ $or: [{ email: email.toLowerCase() }, { phone }] });
   if (exists) return res.status(400).json({ error: "user_already_exists" });
-
-  // Rate limiting: Check if OTP was sent recently
-  const existing = await OTP.findOne({ email: email.toLowerCase(), purpose: "SIGNUP" });
-  if (existing && (Date.now() - existing.updatedAt.getTime()) < 60 * 1000) {
-    return res.status(429).json({ error: "too_many_requests", retryIn: 60 });
-  }
 
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
@@ -133,7 +128,7 @@ router.post("/customer/verify-otp", async (req, res) => {
 });
 
 // CUSTOMER LOGIN
-router.post("/customer/login", async (req, res) => {
+router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing_fields" });
   if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
@@ -158,19 +153,13 @@ router.post("/customer/login", async (req, res) => {
 });
 
 // FORGOT PASSWORD - Step 1: Send OTP
-router.post("/customer/forgot-password", async (req, res) => {
+router.post("/customer/forgot-password", rateLimit("customer-forgot-password", 3, 600), async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: "missing_email" });
   if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
   const user = await Customer.findOne({ email: email.toLowerCase(), isActive: true });
   if (!user) return res.status(404).json({ error: "user_not_found" });
-
-  // Rate limiting: Check if OTP was sent recently
-  const existing = await OTP.findOne({ email: email.toLowerCase(), purpose: "FORGOT_PASSWORD" });
-  if (existing && (Date.now() - existing.updatedAt.getTime()) < 60 * 1000) {
-    return res.status(429).json({ error: "too_many_requests", retryIn: 60 });
-  }
 
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -190,7 +179,7 @@ router.post("/customer/forgot-password", async (req, res) => {
 });
 
 // FORGOT PASSWORD - Step 2: Reset
-router.post("/customer/reset-password", async (req, res) => {
+router.post("/customer/reset-password", rateLimit("customer-reset-password", 5, 600), async (req, res) => {
   const { email, otp, newPassword } = req.body || {};
   if (!email || !otp || !newPassword) return res.status(400).json({ error: "missing_fields" });
 
@@ -209,7 +198,7 @@ router.post("/customer/reset-password", async (req, res) => {
 });
 
 // CUSTOMER LOGIN VIA OTP - Step 1: Send OTP
-router.post("/customer/login-otp/send", async (req, res) => {
+router.post("/customer/login-otp/send", rateLimit("customer-otp-login", 3, 600), async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: "missing_email" });
   if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
@@ -232,7 +221,7 @@ router.post("/customer/login-otp/send", async (req, res) => {
 });
 
 // CUSTOMER LOGIN VIA OTP - Step 2: Verify
-router.post("/customer/login-otp/verify", async (req, res) => {
+router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 600), async (req, res) => {
   const { email, otp } = req.body || {};
   if (!email || !otp) return res.status(400).json({ error: "missing_fields" });
   const record = await OTP.findOne({ email: String(email).toLowerCase().trim(), otp, purpose: "LOGIN" });

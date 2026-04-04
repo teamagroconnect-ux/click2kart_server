@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import Category from "../models/Category.js";
 import { auth, requireRole, requirePermission } from "../middleware/auth.js";
+import { delCache, bumpCacheVersion } from "../lib/redis.js";
 
 const router = express.Router();
 
@@ -27,6 +28,8 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     attributes: Array.isArray(attributes) ? attributes.map(a => a.toLowerCase().trim()) : []
   };
   const doc = await Category.create(payload);
+  await delCache("categories:all");
+  await bumpCacheVersion("products:grouped");
   res.status(201).json(doc);
 });
 
@@ -63,6 +66,8 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   
   const updated = await Category.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
+  await delCache("categories:all");
+  await bumpCacheVersion("products:grouped");
   res.json(updated);
 });
 
@@ -70,6 +75,8 @@ router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const updated = await Category.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
+  await delCache("categories:all");
+  await bumpCacheVersion("products:grouped");
   res.json({ success: true });
 });
 

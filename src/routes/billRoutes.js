@@ -10,6 +10,7 @@ import { renderInvoiceHTML } from "../lib/invoiceHtml.js";
 import Order from "../models/Order.js";
 import { createBillFromData } from "../lib/billing.js";
 import { sendEmail } from "../lib/mailer.js";
+import { delCache } from "../lib/redis.js";
 
 const router = express.Router();
 
@@ -23,6 +24,10 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
       couponCode
     });
     const populated = await Bill.findById(billDoc._id).populate("customer");
+    
+    // Clear all partner summaries as a new bill might affect them
+    await delCache("partner:summary:*");
+    
     res.status(201).json(populated);
   } catch (err) {
     res.status(400).json({ error: err.message });
