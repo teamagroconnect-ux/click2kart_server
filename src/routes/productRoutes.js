@@ -488,21 +488,24 @@ router.post("/:id/variants", auth, requirePermission("products"), async (req, re
     const conflict = await Product.findOne({ "variants.sku": sku });
     if (conflict) return res.status(400).json({ error: "sku_exists" });
   }
-  const attrs = {};
+  const attrs = new Map();
   if (v?.attributes && typeof v.attributes === 'object') {
     Object.entries(v.attributes).forEach(([key, val]) => {
-      attrs[key.toLowerCase()] = String(val || '').trim();
+      if (key && val) {
+        attrs.set(key.toLowerCase().trim(), String(val).trim());
+      }
     });
   }
   
   const duplicate = (p.variants || []).find(x => {
     const xAttrs = x.attributes instanceof Map ? Object.fromEntries(x.attributes) : (x.attributes || {});
-    const keys = Object.keys(attrs);
+    const keys = Array.from(attrs.keys());
     const xKeys = Object.keys(xAttrs);
     if (keys.length !== xKeys.length) return false;
-    return keys.every(k => xAttrs[k] === attrs[k]);
+    return keys.every(k => String(xAttrs[k] || '').toLowerCase() === String(attrs.get(k) || '').toLowerCase());
   });
   if (duplicate) return res.status(400).json({ error: "duplicate_variant" });
+  
   const newVar = {
     _id: new mongoose.Types.ObjectId(),
     attributes: attrs,
@@ -514,7 +517,9 @@ router.post("/:id/variants", auth, requirePermission("products"), async (req, re
     isActive: v?.isActive != null ? !!v.isActive : true,
     images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
   };
-  p.variants = [...(p.variants || []), newVar];
+  
+  p.variants.push(newVar);
+  p.markModified("variants");
   await p.save();
   try {
     const sum = (p.variants || []).filter(v => v.isActive !== false).reduce((s, v) => s + Number(v.stock || 0), 0);
@@ -549,19 +554,21 @@ router.put("/:id/variants/:vid", auth, requirePermission("products"), async (req
     v.sku = sku;
   }
   if (payload.attributes) {
-    const attrs = {};
+    const attrs = new Map();
     if (payload.attributes && typeof payload.attributes === 'object') {
       Object.entries(payload.attributes).forEach(([key, val]) => {
-        attrs[key.toLowerCase()] = String(val || '').trim();
+        if (key && val) {
+          attrs.set(key.toLowerCase().trim(), String(val).trim());
+        }
       });
     }
     const duplicate = (p.variants || []).find((x, i) => {
       if (i === idx) return false;
       const xAttrs = x.attributes instanceof Map ? Object.fromEntries(x.attributes) : (x.attributes || {});
-      const keys = Object.keys(attrs);
+      const keys = Array.from(attrs.keys());
       const xKeys = Object.keys(xAttrs);
       if (keys.length !== xKeys.length) return false;
-      return keys.every(k => xAttrs[k] === attrs[k]);
+      return keys.every(k => String(xAttrs[k] || '').toLowerCase() === String(attrs.get(k) || '').toLowerCase());
     });
     if (duplicate) return res.status(400).json({ error: "duplicate_variant" });
     v.attributes = attrs;
