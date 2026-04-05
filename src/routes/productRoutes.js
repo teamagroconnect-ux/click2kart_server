@@ -330,7 +330,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
         price: Number(v?.price ?? price),
         mrp: v?.mrp == null ? undefined : Number(v?.mrp),
         stock: Number(v?.stock ?? 0),
-        sku: v?.sku ? String(v.sku).trim() : undefined,
+        sku: v?.sku ? String(v.sku).trim() : "",
         weight: Number(v?.weight ?? weight ?? 0),
         isActive: v?.isActive != null ? !!v.isActive : true,
         images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
@@ -412,7 +412,7 @@ router.put("/:id", auth, requirePermission("products"), async (req, res) => {
         price: Number(v?.price ?? 0),
         mrp: v?.mrp == null ? undefined : Number(v?.mrp),
         stock: v.stock != null ? Number(v.stock) : existingStock,
-        sku: v?.sku ? String(v.sku).trim() : undefined,
+        sku: v?.sku ? String(v.sku).trim() : "",
         weight: Number(v?.weight ?? 0),
         isActive: v?.isActive != null ? !!v.isActive : true,
         images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
@@ -532,10 +532,18 @@ router.put("/:id/variants/:vid", auth, requirePermission("products"), async (req
   if (idx === -1) return res.status(404).json({ error: "variant_not_found" });
   const v = p.variants[idx];
   const payload = req.body || {};
-  if (payload.sku) {
-    const sku = String(payload.sku).trim();
-    const conflict = await Product.findOne({ "variants.sku": sku, _id: { $ne: p._id } });
-    if (conflict) return res.status(400).json({ error: "sku_exists" });
+  if (payload.sku !== undefined) {
+    const sku = String(payload.sku || "").trim();
+    if (sku) {
+      const conflict = await Product.findOne({ 
+        $or: [
+          { sku: sku, _id: { $ne: p._id } },
+          { "variants.sku": sku, _id: { $ne: p._id } },
+          { _id: p._id, "variants.sku": sku, "variants._id": { $ne: new mongoose.Types.ObjectId(req.params.vid) } }
+        ]
+      });
+      if (conflict) return res.status(400).json({ error: "sku_exists" });
+    }
     v.sku = sku;
   }
   if (payload.attributes) {
@@ -582,6 +590,29 @@ router.put("/:id/variants/:vid", auth, requirePermission("products"), async (req
     await p.save();
   } catch {}
   res.json(v);
+});
+
+router.delete("/:id/variants/:vid", auth, requirePermission("products"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const p = await Product.findById(req.params.id);
+  if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
+  
+  const initialCount = p.variants?.length || 0;
+  p.variants = (p.variants || []).filter(v => v._id.toString() !== req.params.vid);
+  
+  if (p.variants.length === initialCount) return res.status(404).json({ error: "variant_not_found" });
+  
+  p.markModified("variants");
+  await p.save();
+  
+  // Recalculate total product stock
+  try {
+    const sum = (p.variants || []).filter(x => x.isActive !== false).reduce((s, x) => s + Number(x.stock || 0), 0);
+    p.stock = Number.isFinite(sum) ? sum : 0;
+    await p.save();
+  } catch {}
+  
+  res.json({ success: true });
 });
 
 router.patch("/:id/variants/:vid/stock", auth, requirePermission("inventory"), async (req, res) => {
