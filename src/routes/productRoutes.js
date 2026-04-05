@@ -616,6 +616,9 @@ router.delete("/:id/variants/:vid", auth, requirePermission("products"), async (
     await p.save();
   } catch {}
   
+  await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
+  
   res.json({ success: true });
 });
 
