@@ -4,6 +4,7 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import { connectIfConfigured } from "./lib/db.js";
 import { connectRedis } from "./lib/redis.js";
+import { warmCache } from "./lib/cacheWarmer.js";
 import http from "http";
 import { initSocket } from "./lib/socket.js";
 import Admin from "./models/Admin.js";
@@ -88,6 +89,10 @@ const ensureDefaultAdmin = async () => {
 const start = async () => {
   await connectIfConfigured();
   await connectRedis();
+  
+  // Warm cache on start (async to not block server start)
+  warmCache().catch(err => console.error("Warming Error:", err));
+
   await ensureDefaultAdmin();
   const server = http.createServer(app);
   initSocket(server);

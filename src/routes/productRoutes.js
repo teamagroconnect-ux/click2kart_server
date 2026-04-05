@@ -114,32 +114,53 @@ router.get("/grouped", async (req, res) => {
 router.get("/", async (req, res) => {
   const connected = mongoose.connection.readyState === 1;
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
-  const query = { isActive: true };
-  if (req.query.brand) {
-    if (mongoose.isValidObjectId(req.query.brand)) query.brand = req.query.brand;
-  }
-  if (req.query.category) {
-    if (mongoose.isValidObjectId(req.query.category)) query.category = req.query.category;
-  }
-  if (req.query.subCategory) {
-    if (mongoose.isValidObjectId(req.query.subCategory)) query.subCategory = req.query.subCategory;
-  }
-  if (req.query.store) query.store = req.query.store.toString().trim();
-  if (req.query.section) query.section = req.query.section.toString().trim();
-  const q = req.query.q ? String(req.query.q).trim() : "";
-  if (q && q.length < 2) query.name = { $regex: q, $options: "i" };
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const useText = q && q.length >= 2;
-  if (useText) query.$text = { $search: q };
-  const total = await Product.countDocuments(query);
-  let cursor = Product.find(query).populate("brand", "name").populate("category", "name").populate("subCategory", "name");
-  if (useText) cursor = cursor.select({ score: { $meta: "textScore" } }).sort({ score: { $meta: "textScore" }, createdAt: -1 });
-  else cursor = cursor.sort({ createdAt: -1 });
-  const items = await cursor.skip((page - 1) * limit).limit(limit);
+  
+  const { brand, category, subCategory, store, section, q, page: _page, limit: _limit } = req.query;
+  const page = Math.max(1, parseInt(_page) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(_limit) || 20));
   const canViewPrice = isViewerAuthorized(req);
-  const safeItems = items.map((it) => sanitizeProduct(it, canViewPrice));
-  res.json({ page, limit, total, items: safeItems });
+  
+  // Get current version for products to avoid slow pattern deletes
+  const version = await getCacheVersion("products:list");
+  
+  // Dynamic key based on query params
+  const cacheKey = `products:list:v${version}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
+
+  const result = await getOrSetCache(cacheKey, async () => {
+    const query = { isActive: true };
+    if (brand && mongoose.isValidObjectId(brand)) query.brand = brand;
+    if (category && mongoose.isValidObjectId(category)) query.category = category;
+    if (subCategory && mongoose.isValidObjectId(subCategory)) query.subCategory = subCategory;
+    if (store) query.store = store.toString().trim();
+    if (section) query.section = section.toString().trim();
+    
+    const searchStr = q ? String(q).trim() : "";
+    const useText = searchStr && searchStr.length >= 2;
+    if (useText) {
+      query.$text = { $search: searchStr };
+    } else if (searchStr && searchStr.length < 2) {
+      query.name = { $regex: searchStr, $options: "i" };
+    }
+
+    const total = await Product.countDocuments(query);
+    let cursor = Product.find(query)
+      .populate("brand", "name")
+      .populate("category", "name")
+      .populate("subCategory", "name");
+    
+    if (useText) {
+      cursor = cursor.select({ score: { $meta: "textScore" } }).sort({ score: { $meta: "textScore" }, createdAt: -1 });
+    } else {
+      cursor = cursor.sort({ createdAt: -1 });
+    }
+    
+    const items = await cursor.skip((page - 1) * limit).limit(limit);
+    const safeItems = items.map((it) => sanitizeProduct(it, canViewPrice));
+    
+    return { page, limit, total, items: safeItems };
+  }, 3600); // 1 hour
+
+  res.json(result);
 });
 
 router.get("/low-stock", auth, requirePermission("inventory"), async (req, res) => {
@@ -326,6 +347,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     }
   } catch {}
   await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.status(201).json(doc);
 });
 
@@ -451,6 +473,7 @@ router.put("/:id", auth, requirePermission("products"), async (req, res) => {
     }
   } catch {}
   await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.json(updated);
 });
 

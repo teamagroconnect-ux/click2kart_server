@@ -16,6 +16,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
   const doc = await Brand.create({ name, slug, logo });
   await delCache("brands:all");
   await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.status(201).json(doc);
 });
 
@@ -44,6 +45,7 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!updated) return res.status(404).json({ error: "not_found" });
   await delCache("brands:all:*");
   await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.json(updated);
 });
 
@@ -53,6 +55,7 @@ router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!updated) return res.status(404).json({ error: "not_found" });
   await delCache("brands:all:*");
   await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.json({ success: true });
 });
 

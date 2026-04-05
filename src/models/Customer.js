@@ -38,6 +38,4 @@ customerSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
-customerSchema.index({ phone: 1 }, { unique: true });
-
 export default mongoose.models.Customer || mongoose.model("Customer", customerSchema);
