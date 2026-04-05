@@ -521,6 +521,8 @@ router.post("/:id/variants", auth, requirePermission("products"), async (req, re
     p.stock = Number.isFinite(sum) ? sum : 0;
     await p.save();
   } catch {}
+  await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.status(201).json(newVar);
 });
 
@@ -589,6 +591,8 @@ router.put("/:id/variants/:vid", auth, requirePermission("products"), async (req
     p.stock = Number.isFinite(sum) ? sum : 0;
     await p.save();
   } catch {}
+  await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.json(v);
 });
 
