@@ -8,7 +8,7 @@ const router = express.Router();
 
 const serializeCart = async (cart) => {
   if (!cart) return { items: [] };
-  await cart.populate("items.product", "name price images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp");
+  await cart.populate("items.product", "name price gst images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp");
   return {
     items: cart.items.map((it) => {
       const base = {
@@ -28,6 +28,7 @@ const serializeCart = async (cart) => {
             name: it.product.name,
             attributes: v.attributes,
             price: v.price ?? it.product.price,
+            gst: it.product.gst || 0,
             stock: v.stock ?? 0,
             sku: v.sku,
             image: (v.images?.[0]?.url || it.product.images?.[0]?.url || ""),
@@ -39,6 +40,7 @@ const serializeCart = async (cart) => {
         ...base,
         name: it.product.name,
         price: it.product.price,
+        gst: it.product.gst || 0,
         stock: it.product.stock,
         image: it.product.images?.[0]?.url || "",
         minOrderQty: it.product.minOrderQty || 0
