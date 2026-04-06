@@ -26,12 +26,12 @@ export const computeTotals = (products, items) => {
       effectivePrice = Math.max(0, (variant?.price ?? p.price) - (p.bulkDiscountPriceReduction || 0));
     }
 
-    const lineSubtotal = effectivePrice * qty;
-    const lineGst = Number((((lineSubtotal * (p.gst || 0)) / 100)).toFixed(2));
-    const lineTotal = lineSubtotal + lineGst;
+    const lineTotal = effectivePrice * qty;
+    const rate = p.gst || 0;
+    const lineGst = rate > 0 ? Number((lineTotal - (lineTotal / (1 + rate / 100))).toFixed(2)) : 0;
+    const lineSubtotal = Number((lineTotal - lineGst).toFixed(2));
     subtotal += lineSubtotal;
     gstTotal += lineGst;
-    const rate = p.gst || 0;
     map.set(rate, (map.get(rate) || 0) + lineGst);
     
     // Convert attributes Map to plain object for Object.entries if needed
