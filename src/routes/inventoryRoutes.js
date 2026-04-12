@@ -67,6 +67,73 @@ router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
   res.status(201).json({ productId: doc._id.toString(), variantSku, before, added: qty, after });
 });
 
+// Stock IN (Bulk): increase product stock for multiple variants at once
+router.post("/bulk-in", auth, requirePermission("inventory"), async (req, res) => {
+  const { updates, note } = req.body || {};
+  if (!Array.isArray(updates) || updates.length === 0) {
+     return res.status(400).json({ error: "no_updates_provided" });
+  }
+
+  const results = [];
+  
+  for (const item of updates) {
+    const { productId, variantSku, quantity } = item;
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty <= 0) continue;
+
+    const doc = await Product.findById(productId);
+    if (!doc || !doc.isActive) continue;
+
+    if (doc.variants && doc.variants.length > 0 && !variantSku) continue;
+
+    let before = 0;
+    let after = 0;
+
+    if (variantSku) {
+      const vIdx = (doc.variants || []).findIndex(v => v.sku === String(variantSku));
+      if (vIdx === -1) continue;
+      before = doc.variants[vIdx].stock || 0;
+      doc.variants[vIdx].stock = before + qty;
+      doc.stock = (doc.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
+      after = doc.variants[vIdx].stock;
+    } else {
+      before = doc.stock || 0;
+      doc.stock = before + qty;
+      after = doc.stock;
+    }
+
+    await doc.save();
+    
+    await StockTxn.create({
+      product: doc._id,
+      variantSku: variantSku ? String(variantSku) : doc.sku,
+      type: "ADDED",
+      quantity: qty,
+      before,
+      after,
+      refType: "MANUAL",
+      note: note || ""
+    });
+
+    try {
+      await AuditLog.create({
+        actorId: req.user?.id || "",
+        actorRole: req.user?.role || "",
+        type: "STOCK",
+        entityType: "PRODUCT",
+        entityId: doc._id.toString(),
+        note: `Bulk Stock IN +${qty} ${variantSku ? '(Variant SKU: ' + variantSku + ')' : ''} ${note || ""}`,
+        before: { stock: before },
+        after: { stock: after }
+      });
+    } catch {}
+
+    results.push({ productId: doc._id.toString(), variantSku, added: qty });
+  }
+
+  res.status(200).json({ success: true, updated: results.length, results });
+});
+
 // History: list recent stock-in records
 router.get("/history", auth, requirePermission("inventory"), async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
