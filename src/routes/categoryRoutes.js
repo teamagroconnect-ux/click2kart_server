@@ -75,8 +75,8 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const updated = await Category.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
-  if (!updated) return res.status(404).json({ error: "not_found" });
+  const deleted = await Category.findByIdAndDelete(req.params.id);
+  if (!deleted) return res.status(404).json({ error: "not_found" });
   await delCache("categories:all");
   await bumpCacheVersion("products:grouped");
   await bumpCacheVersion("products:list");

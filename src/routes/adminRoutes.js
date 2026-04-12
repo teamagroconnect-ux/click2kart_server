@@ -96,7 +96,8 @@ router.get("/stats", auth, async (req, res) => {
     }
   ]);
 
-  const [totalCustomers, pendingCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
+  const [actualProductsCount, totalCustomers, pendingCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
+    Product.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: false }),
     Bill.countDocuments({}),
@@ -144,6 +145,7 @@ router.get("/stats", auth, async (req, res) => {
   });
 
   res.json({ 
+    actualProductsCount,
     totalProducts: inv.totalSkus, 
     totalUnits: inv.totalUnits,
     outOfStock: inv.outOfStock,
