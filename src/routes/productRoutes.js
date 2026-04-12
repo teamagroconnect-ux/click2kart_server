@@ -148,11 +148,24 @@ router.get("/", async (req, res) => {
     if (section) query.section = section.toString().trim();
     
     const searchStr = q ? String(q).trim() : "";
-    const useText = searchStr && searchStr.length >= 2;
-    if (useText) {
+    const words = searchStr.split(/\s+/).filter(Boolean);
+    // Single "token" queries (SKU-ish or one word): match name OR product sku OR variant sku — easier stock-in search.
+    const singleTokenSkuLike =
+      words.length === 1 && /^[A-Za-z0-9._\-#\/]+$/.test(words[0]);
+    const useRegexWide =
+      !!searchStr &&
+      (searchStr.length < 2 || singleTokenSkuLike);
+    const useText = !!searchStr && searchStr.length >= 2 && !singleTokenSkuLike;
+
+    if (useRegexWide) {
+      const esc = searchStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      query.$or = [
+        { name: { $regex: esc, $options: "i" } },
+        { sku: { $regex: esc, $options: "i" } },
+        { "variants.sku": { $regex: esc, $options: "i" } },
+      ];
+    } else if (useText) {
       query.$text = { $search: searchStr };
-    } else if (searchStr && searchStr.length < 2) {
-      query.name = { $regex: searchStr, $options: "i" };
     }
 
     const total = await Product.countDocuments(query);
