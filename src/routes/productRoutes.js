@@ -6,6 +6,8 @@ import Category from "../models/Category.js";
 import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import StockTxn from "../models/StockTxn.js";
 import Bill from "../models/Bill.js";
+import Order from "../models/Order.js";
+import Customer from "../models/Customer.js";
 import Review from "../models/Review.js";
 import jwt from "jsonwebtoken";
 import { getOrSetCache, delCache, getCacheVersion, bumpCacheVersion } from "../lib/redis.js";
@@ -27,6 +29,17 @@ const isViewerAuthorized = (req) => {
     }
   } catch {}
   return false;
+};
+
+const normalizeSpecifications = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((s) => ({
+      key: String(s?.key ?? s?.name ?? "").trim(),
+      value: String(s?.value ?? "").trim()
+    }))
+    .filter((s) => s.key && s.value)
+    .slice(0, 40);
 };
 
 const withDerived = (p) => {
@@ -279,7 +292,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requirePermission("products"), async (req, res) => {
-  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku } = req.body || {};
+  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
   if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
@@ -308,6 +321,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     section: section ? String(section).trim() : "",
     minOrderQty: Number(minOrderQty || 0),
     highlights: Array.isArray(highlights) ? highlights.map(h => String(h || '').trim()).filter(Boolean).slice(0, 12) : [],
+    specifications: normalizeSpecifications(specifications),
     bulkDiscountQuantity: Number(bulkDiscountQuantity || 0),
     bulkDiscountPriceReduction: Number(bulkDiscountPriceReduction || 0),
     bulkTiers: Array.isArray(bulkTiers)
@@ -353,7 +367,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
 
 router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku"];
+  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   
@@ -382,6 +396,9 @@ router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (Array.isArray(payload.images)) payload.images = payload.images.map((i) => (typeof i === "string" ? { url: i } : i)).filter((i) => i && i.url);
   if (Array.isArray(payload.highlights)) {
     payload.highlights = payload.highlights.map(h => String(h || '').trim()).filter(Boolean).slice(0, 12);
+  }
+  if (Array.isArray(payload.specifications)) {
+    payload.specifications = normalizeSpecifications(payload.specifications);
   }
   if (Array.isArray(payload.bulkTiers)) {
     payload.bulkTiers = payload.bulkTiers
@@ -714,8 +731,26 @@ router.post("/:id/reviews", auth, async (req, res) => {
   if (!Number.isFinite(r) || r < 1 || r > 5) return res.status(400).json({ error: "invalid_rating" });
   const product = await Product.findById(req.params.id);
   if (!product || !product.isActive) return res.status(404).json({ error: "not_found" });
-  const eligible = await Bill.exists({ customer: req.user?.id, "items.product": product._id });
-  if (!eligible) return res.status(403).json({ error: "not_eligible" });
+  const billEligible = await Bill.exists({ customer: req.user?.id, "items.product": product._id });
+  let orderEligible = false;
+  if (!billEligible && req.user?.id) {
+    const cust = await Customer.findById(req.user.id).select("phone").lean();
+    const phone = cust?.phone ? String(cust.phone).replace(/\D/g, "").slice(-10) : "";
+    if (phone.length === 10) {
+      const recent = await Order.find({
+        "items.product": product._id,
+        status: { $in: ["DELIVERED", "FULFILLED", "SHIPPED", "CONFIRMED"] }
+      })
+        .select("customer.phone")
+        .sort({ createdAt: -1 })
+        .limit(80)
+        .lean();
+      orderEligible = recent.some(
+        (o) => String(o.customer?.phone || "").replace(/\D/g, "").slice(-10) === phone
+      );
+    }
+  }
+  if (!billEligible && !orderEligible) return res.status(403).json({ error: "not_eligible" });
   await Review.findOneAndUpdate(
     { product: product._id, customer: req.user.id },
     { rating: r, comment: comment || "" },

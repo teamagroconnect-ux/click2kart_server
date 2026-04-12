@@ -24,6 +24,15 @@ const productSchema = new mongoose.Schema(
     store: { type: String, default: "" },
     section: { type: String, default: "" },
     highlights: { type: [String], default: [] },
+    specifications: {
+      type: [
+        {
+          key: { type: String, trim: true, maxlength: 120 },
+          value: { type: String, trim: true, maxlength: 500 }
+        }
+      ],
+      default: []
+    },
     bulkDiscountQuantity: { type: Number, default: 0, min: 0 },
     bulkDiscountPriceReduction: { type: Number, default: 0, min: 0 },
     bulkTiers: {
