@@ -36,7 +36,7 @@ export const computeTotals = (products, items) => {
     
     // Convert attributes Map to plain object for Object.entries if needed
     const vAttrs = variant ? (variant.attributes instanceof Map ? Object.fromEntries(variant.attributes) : variant.attributes) : {};
-    const attrText = variant ? Object.entries(vAttrs || {}).filter(([_, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", ") : "";
+    const attrText = variant ? Object.values(vAttrs || {}).filter(v => v).map(v => String(v).toUpperCase()).join(", ") : "";
     
     enriched.push({
       product: p._id,
