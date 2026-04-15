@@ -70,6 +70,9 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+productSchema.index({ name: 1 });
+productSchema.index({ category: 1 });
+productSchema.index({ sku: 1 });
 productSchema.index({ name: "text", description: "text" }, { weights: { name: 10, description: 2 } });
 productSchema.index({ brand: 1, category: 1, subCategory: 1 });
 productSchema.index({ isActive: 1, createdAt: -1 });
