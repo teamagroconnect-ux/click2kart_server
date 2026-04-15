@@ -370,9 +370,9 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
       return res.status(500).json({ error: "razorpay_not_configured" });
     }
-    const ids = items.map((x) => x.productId);
-    const products = await Product.find({ _id: { $in: ids }, isActive: true });
-    if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
+    const uniqueIds = [...new Set(items.map((x) => x.productId))];
+    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
+    if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
     const minAmount = Number(process.env.MIN_ORDER_AMOUNT || 5000);
     if (totals.total < minAmount) return res.status(400).json({ error: "min_order_not_met", minAmount });
@@ -413,9 +413,9 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
 
   try {
-    const ids = items.map((x) => x.productId);
-    const products = await Product.find({ _id: { $in: ids }, isActive: true });
-    if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
+    const uniqueIds = [...new Set(items.map((x) => x.productId))];
+    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
+    if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     // Stock re-check
     for (const it of items) {
       const p = products.find(x => x._id.toString() === it.productId);
