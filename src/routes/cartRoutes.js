@@ -59,9 +59,20 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/add", async (req, res) => {
+  console.log('=== /api/cart/add called ===')
+  console.log('req.body:', req.body)
+  
   const { productId, variantSku, quantity } = req.body || {};
   const qty = Math.round(Number(quantity || 1));
+  
+  console.log('Parsed values:', { productId, variantSku, quantity, qty })
+  
   if (!mongoose.isValidObjectId(productId) || !Number.isFinite(qty) || qty <= 0) {
+    console.log('Validation failed:', { 
+      validObjectId: mongoose.isValidObjectId(productId), 
+      validQty: Number.isFinite(qty), 
+      qtyPositive: qty > 0 
+    })
     return res.status(400).json({ error: "invalid_payload" });
   }
 
