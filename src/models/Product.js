@@ -8,6 +8,7 @@ const imageSchema = new mongoose.Schema({
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
+    slug: { type: String, trim: true, unique: true, sparse: true },
     description: { type: String, default: "" },
     price: { type: Number, required: true, min: 0 },
     sku: { type: String, trim: true, index: true }, // Top-level SKU for simple products
@@ -70,6 +71,37 @@ const productSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Function to generate slug from name
+function generateSlug(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '') // Remove special chars
+    .replace(/\s+/g, '-') // Replace spaces with hyphens
+    .replace(/-+/g, '-') // Replace multiple hyphens with single
+    .trim()
+    .substring(0, 100);
+}
+
+// Pre-save hook to auto-generate slug if not present
+productSchema.pre('save', async function (next) {
+  if (!this.slug && this.name) {
+    let baseSlug = generateSlug(this.name);
+    let slug = baseSlug;
+    let counter = 1;
+
+    // Ensure unique slug
+    while (true) {
+      const existing = await mongoose.models.Product?.findOne({ slug, _id: { $ne: this._id } });
+      if (!existing) break;
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+
+    this.slug = slug;
+  }
+  next();
+});
 
 productSchema.index({ name: 1 });
 productSchema.index({ category: 1 });

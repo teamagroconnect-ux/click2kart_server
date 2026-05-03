@@ -230,22 +230,44 @@ router.get("/low-stock", auth, requirePermission("inventory"), async (req, res) 
   res.json({ threshold: t, items: flattened.sort((a, b) => a.stock - b.stock) });
 });
 
-router.get("/:id", async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const item = await Product.findById(req.params.id)
-    .populate("brand", "name")
-    .populate("category", "name")
-    .populate("subCategory", "name");
+router.get("/:idOrSlug", async (req, res) => {
+  const { idOrSlug } = req.params;
+  let item;
   
-  if (!item || !item.isActive) return res.status(404).json({ error: "not_found" });
+  if (mongoose.isValidObjectId(idOrSlug)) {
+    item = await Product.findById(idOrSlug);
+  }
+  
+  if (!item) {
+    item = await Product.findOne({ slug: idOrSlug });
+  }
+  
+  if (!item) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  
+  await item.populate("brand", "name");
+  await item.populate("category", "name");
+  await item.populate("subCategory", "name");
+  
+  if (!item.isActive) return res.status(404).json({ error: "not_found" });
   const canViewPrice = isViewerAuthorized(req);
   res.json(sanitizeProduct(item, canViewPrice));
 });
 
 // Similar products by category
-router.get("/:id/recommendations", async (req, res) => {
-  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const base = await Product.findById(req.params.id).select({ category: 1, brand: 1, price: 1 });
+router.get("/:idOrSlug/recommendations", async (req, res) => {
+  const { idOrSlug } = req.params;
+  let base;
+  
+  if (mongoose.isValidObjectId(idOrSlug)) {
+    base = await Product.findById(idOrSlug).select({ category: 1, brand: 1, price: 1, _id: 1, isActive: 1 });
+  }
+  
+  if (!base) {
+    base = await Product.findOne({ slug: idOrSlug }).select({ category: 1, brand: 1, price: 1, _id: 1, isActive: 1 });
+  }
+  
   if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 6));
   const priceRange = {
@@ -305,7 +327,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requirePermission("products"), async (req, res) => {
-  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku, variantDisplayType } = req.body || {};
+  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
   if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
@@ -344,7 +366,6 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
           .sort((a,b) => a.quantity - b.quantity)
       : [],
     attributes: Array.isArray(req.body.attributes) ? req.body.attributes.map(a => String(a || '').trim().toLowerCase()).filter(Boolean) : [],
-    variantDisplayType: variantDisplayType || 'selector',
     variants: Array.isArray(variants) ? variants.map(v => {
       const variantAttrs = {};
       if (v.attributes && typeof v.attributes === 'object') {
@@ -381,7 +402,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
 
 router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku", "variantDisplayType", "attributes"];
+  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   
