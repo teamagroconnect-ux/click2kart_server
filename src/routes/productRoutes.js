@@ -47,6 +47,9 @@ const withDerived = (p) => {
   if (obj.mrp != null && obj.price != null && obj.mrp > obj.price) {
     obj.discountPercent = Math.round(((Number(obj.mrp) - Number(obj.price)) / Number(obj.mrp)) * 100);
   }
+  if (obj.packSize == null || obj.packSize === undefined) {
+    obj.packSize = 1;
+  }
   return obj;
 };
 
@@ -127,6 +130,16 @@ router.get("/grouped", async (req, res) => {
 router.get("/", async (req, res) => {
   const connected = mongoose.connection.readyState === 1;
   if (!connected) return res.status(503).json({ error: "database_unavailable", items: [] });
+  
+  try {
+    const updateResult = await Product.updateMany({ packSize: { $exists: false } }, { $set: { packSize: 1 } });
+    if (updateResult.modifiedCount > 0) {
+      await bumpCacheVersion("products:grouped");
+      await bumpCacheVersion("products:list");
+    }
+  } catch(e) {
+    console.error("Failed to update packSize for existing products:", e);
+  }
   
   const { brand, category, subCategory, store, section, q, page: _page, limit: _limit } = req.query;
   const page = Math.max(1, parseInt(_page) || 1);
