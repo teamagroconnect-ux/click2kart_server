@@ -60,8 +60,8 @@ router.get("/", async (req, res) => {
 
 router.post("/add", async (req, res) => {
   const { productId, variantSku, quantity } = req.body || {};
-  const qty = Number(quantity || 1);
-  if (!mongoose.isValidObjectId(productId) || !Number.isInteger(qty) || qty <= 0) {
+  const qty = Math.round(Number(quantity || 1));
+  if (!mongoose.isValidObjectId(productId) || !Number.isFinite(qty) || qty <= 0) {
     return res.status(400).json({ error: "invalid_payload" });
   }
 
@@ -73,7 +73,7 @@ router.post("/add", async (req, res) => {
     if (!variant || !variant.isActive) return res.status(404).json({ error: "variant_not_found" });
   }
 
-  const minQty = Math.max(1, Number(product.minOrderQty || 0));
+  const minQty = Math.max(1, Math.round(Number(product.minOrderQty || 0)));
   const effQty = Math.max(qty, minQty);
 
   let cart = await Cart.findOne({ customer: req.user.id });
@@ -99,8 +99,8 @@ router.post("/add", async (req, res) => {
 
 router.put("/update", async (req, res) => {
   const { productId, variantSku, quantity } = req.body || {};
-  const qty = Number(quantity);
-  if (!mongoose.isValidObjectId(productId) || !Number.isInteger(qty)) {
+  const qty = Math.round(Number(quantity));
+  if (!mongoose.isValidObjectId(productId) || !Number.isFinite(qty)) {
     return res.status(400).json({ error: "invalid_payload" });
   }
 
