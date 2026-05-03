@@ -327,7 +327,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requirePermission("products"), async (req, res) => {
-  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku } = req.body || {};
+  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku, packSize } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
   if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
@@ -355,6 +355,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     store: store ? String(store).trim() : "",
     section: section ? String(section).trim() : "",
     minOrderQty: Number(minOrderQty || 0),
+    packSize: Number(packSize || 1),
     highlights: Array.isArray(highlights) ? highlights.map(h => String(h || '').trim()).filter(Boolean).slice(0, 12) : [],
     specifications: normalizeSpecifications(specifications),
     bulkDiscountQuantity: Number(bulkDiscountQuantity || 0),
@@ -402,9 +403,10 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
 
 router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku"];
+  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku", "packSize"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
+  if (payload.packSize !== undefined) payload.packSize = Number(payload.packSize || 1);
   
   const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1, variants: 1, stock: 1 });
   if (!beforeDoc) return res.status(404).json({ error: "not_found" });

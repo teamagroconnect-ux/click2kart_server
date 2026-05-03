@@ -45,6 +45,7 @@ const productSchema = new mongoose.Schema(
       ],
       default: []
     },
+    packSize: { type: Number, default: 1, min: 1 }, // Pack size per unit (e.g., 12 items per pack)
     attributes: { type: [String], default: [] }, // e.g. ["color", "ram", "storage"] or ["model"]
     variants: {
       type: [
