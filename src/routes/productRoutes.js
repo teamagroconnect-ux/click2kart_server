@@ -340,7 +340,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requirePermission("products"), async (req, res) => {
-  const { name, price, categoryId, subCategoryId, images, stock, weight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku, packSize } = req.body || {};
+  const { name, price, categoryId, subCategoryId, images, stock, weight, volumetricWeight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku, packSize } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
   if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
@@ -362,6 +362,11 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     images: imgArr,
     stock: Number(stock),
     weight: Number(weight || 0),
+    volumetricWeight: {
+      length: Number(volumetricWeight?.length || 0),
+      width: Number(volumetricWeight?.width || 0),
+      height: Number(volumetricWeight?.height || 0)
+    },
     gst: gst == null ? 0 : Number(gst),
     mrp: mrp == null || mrp === "" ? undefined : Number(mrp),
     priceTrend: 0, 
@@ -416,10 +421,17 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
 
 router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku", "packSize"];
+  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "volumetricWeight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku", "packSize"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.packSize !== undefined) payload.packSize = Number(payload.packSize || 1);
+  if (payload.volumetricWeight !== undefined) {
+    payload.volumetricWeight = {
+      length: Number(payload.volumetricWeight?.length || 0),
+      width: Number(payload.volumetricWeight?.width || 0),
+      height: Number(payload.volumetricWeight?.height || 0)
+    };
+  }
   
   const beforeDoc = await Product.findById(req.params.id).select({ price: 1, bulkTiers: 1, gst: 1, minOrderQty: 1, variants: 1, stock: 1 });
   if (!beforeDoc) return res.status(404).json({ error: "not_found" });

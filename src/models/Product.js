@@ -19,6 +19,14 @@ const productSchema = new mongoose.Schema(
     images: { type: [imageSchema], default: [] },
     stock: { type: Number, required: true, min: 0 },
     weight: { type: Number, default: 0, min: 0 }, // weight in grams
+    volumetricWeight: {
+      type: {
+        length: { type: Number, default: 0, min: 0 }, // length in cm
+        width: { type: Number, default: 0, min: 0 }, // width in cm
+        height: { type: Number, default: 0, min: 0 } // height in cm
+      },
+      default: { length: 0, width: 0, height: 0 }
+    },
     gst: { type: Number, default: 0, min: 0 },
     mrp: { type: Number, min: 0 },
     minOrderQty: { type: Number, default: 1, min: 0 },

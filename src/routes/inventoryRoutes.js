@@ -10,7 +10,7 @@ const router = express.Router();
 
 // Stock IN: increase product stock and log entry
 router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
-  const { productId, variantSku, quantity, note } = req.body || {};
+  const { productId, variantSku, quantity, note, newPrice } = req.body || {};
   if (!mongoose.isValidObjectId(productId)) return res.status(400).json({ error: "invalid_product" });
   const qty = Number(quantity);
   if (!Number.isInteger(qty) || qty <= 0) return res.status(400).json({ error: "invalid_quantity" });
@@ -25,18 +25,36 @@ router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
 
   let before = 0;
   let after = 0;
+  let priceBefore = null;
+  let priceAfter = null;
 
   if (variantSku) {
     const vIdx = (doc.variants || []).findIndex(v => v.sku === String(variantSku));
     if (vIdx === -1) return res.status(404).json({ error: "variant_not_found" });
     before = doc.variants[vIdx].stock || 0;
     doc.variants[vIdx].stock = before + qty;
+    
+    // Update price if provided
+    if (newPrice !== undefined && newPrice !== null && !isNaN(Number(newPrice)) && Number(newPrice) > 0) {
+      priceBefore = doc.variants[vIdx].price;
+      doc.variants[vIdx].price = Number(newPrice);
+      priceAfter = doc.variants[vIdx].price;
+    }
+    
     // Recalculate total product stock
     doc.stock = (doc.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
     after = doc.variants[vIdx].stock;
   } else {
     before = doc.stock || 0;
     doc.stock = before + qty;
+    
+    // Update price if provided
+    if (newPrice !== undefined && newPrice !== null && !isNaN(Number(newPrice)) && Number(newPrice) > 0) {
+      priceBefore = doc.price;
+      doc.price = Number(newPrice);
+      priceAfter = doc.price;
+    }
+    
     after = doc.stock;
   }
 
@@ -59,12 +77,12 @@ router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
       type: "STOCK",
       entityType: "PRODUCT",
       entityId: doc._id.toString(),
-      note: `Stock IN +${qty} ${variantSku ? '(Variant SKU: ' + variantSku + ')' : ''} ${note || ""}`,
-      before: { stock: before },
-      after: { stock: after }
+      note: `Stock IN +${qty} ${variantSku ? '(Variant SKU: ' + variantSku + ')' : ''} ${note || ""}${priceBefore !== null ? ` (Price updated from ${priceBefore} to ${priceAfter})` : ''}`,
+      before: { stock: before, ...(priceBefore !== null ? { price: priceBefore } : {}) },
+      after: { stock: after, ...(priceAfter !== null ? { price: priceAfter } : {}) }
     });
   } catch {}
-  res.status(201).json({ productId: doc._id.toString(), variantSku, before, added: qty, after });
+  res.status(201).json({ productId: doc._id.toString(), variantSku, before, added: qty, after, priceBefore, priceAfter });
 });
 
 // Stock IN (Bulk): increase product stock for multiple variants at once
@@ -77,7 +95,7 @@ router.post("/bulk-in", auth, requirePermission("inventory"), async (req, res) =
   const results = [];
   
   for (const item of updates) {
-    const { productId, variantSku, quantity } = item;
+    const { productId, variantSku, quantity, newPrice } = item;
     const qty = Number(quantity);
     if (!Number.isInteger(qty) || qty <= 0) continue;
 
@@ -88,17 +106,35 @@ router.post("/bulk-in", auth, requirePermission("inventory"), async (req, res) =
 
     let before = 0;
     let after = 0;
+    let priceBefore = null;
+    let priceAfter = null;
 
     if (variantSku) {
       const vIdx = (doc.variants || []).findIndex(v => v.sku === String(variantSku));
       if (vIdx === -1) continue;
       before = doc.variants[vIdx].stock || 0;
       doc.variants[vIdx].stock = before + qty;
+      
+      // Update price if provided
+      if (newPrice !== undefined && newPrice !== null && !isNaN(Number(newPrice)) && Number(newPrice) > 0) {
+        priceBefore = doc.variants[vIdx].price;
+        doc.variants[vIdx].price = Number(newPrice);
+        priceAfter = doc.variants[vIdx].price;
+      }
+      
       doc.stock = (doc.variants || []).filter(vx => vx.isActive !== false).reduce((s, vx) => s + (vx.stock || 0), 0);
       after = doc.variants[vIdx].stock;
     } else {
       before = doc.stock || 0;
       doc.stock = before + qty;
+      
+      // Update price if provided
+      if (newPrice !== undefined && newPrice !== null && !isNaN(Number(newPrice)) && Number(newPrice) > 0) {
+        priceBefore = doc.price;
+        doc.price = Number(newPrice);
+        priceAfter = doc.price;
+      }
+      
       after = doc.stock;
     }
 
@@ -122,13 +158,13 @@ router.post("/bulk-in", auth, requirePermission("inventory"), async (req, res) =
         type: "STOCK",
         entityType: "PRODUCT",
         entityId: doc._id.toString(),
-        note: `Bulk Stock IN +${qty} ${variantSku ? '(Variant SKU: ' + variantSku + ')' : ''} ${note || ""}`,
-        before: { stock: before },
-        after: { stock: after }
+        note: `Bulk Stock IN +${qty} ${variantSku ? '(Variant SKU: ' + variantSku + ')' : ''} ${note || ""}${priceBefore !== null ? ` (Price updated from ${priceBefore} to ${priceAfter})` : ''}`,
+        before: { stock: before, ...(priceBefore !== null ? { price: priceBefore } : {}) },
+        after: { stock: after, ...(priceAfter !== null ? { price: priceAfter } : {}) }
       });
     } catch {}
 
-    results.push({ productId: doc._id.toString(), variantSku, added: qty });
+    results.push({ productId: doc._id.toString(), variantSku, added: qty, priceBefore, priceAfter });
   }
 
   res.status(200).json({ success: true, updated: results.length, results });
