@@ -110,15 +110,19 @@ export const sendOTP = async (email, otp, purpose = "ACCOUNT_VERIFICATION") => {
       ? `Reset Your Password - ${company}`
       : purpose === "PARTNER_LOGIN"
       ? `Partner Portal Access OTP - ${company}`
+      : purpose === "PARTNER_SIGNUP"
+      ? `Partner Application OTP - ${company}`
       : `Email Verification OTP - ${company}`;
   
   const title =
     purpose === "FORGOT_PASSWORD" ? "Reset Password" :
-    purpose === "PARTNER_LOGIN" ? "Partner Login" : "Verify Email";
+    purpose === "PARTNER_LOGIN" ? "Partner Login" :
+    purpose === "PARTNER_SIGNUP" ? "Partner Application" : "Verify Email";
 
   const intro =
     purpose === "FORGOT_PASSWORD" ? "You requested to reset your password. Use the secure code below." :
     purpose === "PARTNER_LOGIN" ? "Use the one-time password below to access your Partner Dashboard." :
+    purpose === "PARTNER_SIGNUP" ? "Use the secure code below to verify your email and complete your partner application." :
     "Use the secure code below to verify your email and complete your setup.";
 
   const html = `

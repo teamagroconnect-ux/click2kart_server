@@ -6,8 +6,9 @@ import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
 import Partner from "../models/Partner.js";
-import { sendOTP } from "../lib/mailer.js";
-import { getOrSetCache, getCacheVersion } from "../lib/redis.js";
+import OTP from "../models/OTP.js";
+import { sendOTP, sendEmail } from "../lib/mailer.js";
+import { getOrSetCache, getCacheVersion, bumpCacheVersion } from "../lib/redis.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 
 const router = express.Router();
@@ -181,16 +182,182 @@ router.post("/partner/login", rateLimit("partner-login", 10, 600), async (req, r
   });
 });
 
+// Partner Signup Step 1 - Send OTP
+router.post("/partner/signup", rateLimit("partner-signup", 3, 600), async (req, res) => {
+  const { name, email, phone, businessName, gstNumber, panNumber, address, city, state, pincode, bloodGroup, password } = req.body;
+  
+  if (!name || !email || !phone || !password) {
+    return res.status(400).json({ error: "missing_required_fields" });
+  }
+  
+  if (!validateEmailFormat(email)) {
+    return res.status(400).json({ error: "invalid_email_format" });
+  }
+  
+  const existingPartner = await Partner.findOne({ email });
+  if (existingPartner && existingPartner.isVerified) {
+    return res.status(400).json({ error: "email_already_registered" });
+  }
+  
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+  
+  await OTP.findOneAndUpdate(
+    { email, purpose: "PARTNER_SIGNUP" },
+    {
+      otp,
+      expiresAt,
+      metadata: {
+        name,
+        email,
+        phone,
+        businessName,
+        gstNumber,
+        panNumber,
+        address,
+        city,
+        state,
+        pincode,
+        bloodGroup,
+        password
+      }
+    },
+    { upsert: true }
+  );
+  
+  try {
+    await sendOTP(email, otp, "PARTNER_SIGNUP");
+    res.json({ message: "otp_sent" });
+  } catch (err) {
+    console.error("Failed to send partner signup OTP:", err);
+    res.status(500).json({ error: "failed_to_send_otp" });
+  }
+});
+
+// Partner Signup Step 2 - Verify OTP & Create Account
+router.post("/partner/verify-otp", async (req, res) => {
+  const { email, otp } = req.body;
+  
+  if (!email || !otp) {
+    return res.status(400).json({ error: "missing_fields" });
+  }
+  
+  const record = await OTP.findOne({
+    email: email.toLowerCase(),
+    otp,
+    purpose: "PARTNER_SIGNUP"
+  });
+  
+  if (!record) {
+    return res.status(400).json({ error: "invalid_otp" });
+  }
+  
+  const data = record.metadata;
+  
+  // Create partner account
+  const partner = await Partner.create({
+    name: data.name,
+    email: data.email.toLowerCase(),
+    phone: data.phone,
+    password: data.password,
+    businessName: data.businessName,
+    gstNumber: data.gstNumber,
+    panNumber: data.panNumber,
+    address: data.address,
+    city: data.city,
+    state: data.state,
+    pincode: data.pincode,
+    bloodGroup: data.bloodGroup,
+    isVerified: true,
+    isActive: false // Needs admin approval
+  });
+  
+  // Delete used OTP
+  await OTP.deleteOne({ _id: record._id });
+  
+  // Send notification to admin
+  try {
+    const adminEmail = process.env.ADMIN_EMAIL || process.env.SUPPORT_EMAIL;
+    if (adminEmail) {
+      await sendEmail({
+        to: adminEmail,
+        subject: `New Partner Application - ${data.name}`,
+        html: `
+          <div style="font-family: system-ui; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color:#111; margin:0 0 12px;">New Partner Application</h2>
+            <p style="color:#4b5563; line-height:1.6;">A new partner has applied and verified their email!</p>
+            <div style="background:#f3f4f6; border-radius:10px; padding:16px;">
+              <h3 style="color:#111; margin:0 0 12px; font-size:16px;">Partner Details:</h3>
+              <p style="color:#374151; margin:6px 0;"><strong>Name:</strong> ${data.name}</p>
+              <p style="color:#374151; margin:6px 0;"><strong>Email:</strong> ${data.email}</p>
+              <p style="color:#374151; margin:6px 0;"><strong>Phone:</strong> ${data.phone}</p>
+              <p style="color:#374151; margin:6px 0;"><strong>Business:</strong> ${data.businessName || '-'}</p>
+              <p style="color:#374151; margin:6px 0;"><strong>GST:</strong> ${data.gstNumber || '-'}</p>
+            </div>
+            <p style="color:#6b7280; margin-top:16px; font-size:14px;">Please login to admin panel to review and approve this application.</p>
+          </div>
+        `
+      });
+    }
+  } catch (err) {
+    console.error("Failed to send admin notification for partner signup:", err);
+  }
+  
+  res.json({ message: "application_submitted" });
+});
+
 router.get("/partner/me", (await import("../middleware/auth.js")).auth, async (req, res) => {
   if (req.user.role !== 'partner') return res.status(403).json({ error: 'forbidden' });
-  const partner = await Partner.findById(req.user.id);
-  if (!partner || !partner.isActive) return res.status(404).json({ error: "not_found" });
+  const partner = await Partner.findById(req.user.id).lean();
+  if (!partner) return res.status(404).json({ error: "not_found" });
   
-  const summary = await getOrSetCache(`partner:summary:${partner._id}`, async () => {
-    return await computeSummaryForPartner(partner);
-  }, 900); // 15 minutes
+  // Merge summary with full partner profile
+  const summary = await computeSummaryForPartner(partner);
+  res.json({
+    ...partner,
+    ...summary
+  });
+});
+
+// Update Partner Profile
+router.put("/partner/profile", (await import("../middleware/auth.js")).auth, async (req, res) => {
+  if (req.user.role !== 'partner') return res.status(403).json({ error: 'forbidden' });
   
-  res.json(summary);
+  const {
+    name,
+    phone,
+    businessName,
+    gstNumber,
+    panNumber,
+    address,
+    city,
+    state,
+    pincode,
+    bloodGroup,
+    bankAccount,
+    profilePicture,
+    idCard
+  } = req.body;
+  
+  const updateData = {};
+  if (name !== undefined) updateData.name = name;
+  if (phone !== undefined) updateData.phone = phone;
+  if (businessName !== undefined) updateData.businessName = businessName;
+  if (gstNumber !== undefined) updateData.gstNumber = gstNumber;
+  if (panNumber !== undefined) updateData.panNumber = panNumber;
+  if (address !== undefined) updateData.address = address;
+  if (city !== undefined) updateData.city = city;
+  if (state !== undefined) updateData.state = state;
+  if (pincode !== undefined) updateData.pincode = pincode;
+  if (bloodGroup !== undefined) updateData.bloodGroup = bloodGroup;
+  if (bankAccount !== undefined) updateData.bankAccount = bankAccount;
+  if (profilePicture !== undefined) updateData.profilePicture = profilePicture;
+  if (idCard !== undefined) updateData.idCard = idCard;
+  
+  await Partner.findByIdAndUpdate(req.user.id, updateData, { new: true });
+  await bumpCacheVersion(`partner:summary:${req.user.id}`);
+  
+  res.json({ message: "profile_updated" });
 });
 
 export default router;
