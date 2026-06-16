@@ -5,6 +5,7 @@ import Product from "../models/Product.js";
 import Order from "../models/Order.js";
 import StockTxn from "../models/StockTxn.js";
 import AuditLog from "../models/AuditLog.js";
+import { bumpCacheVersion } from "../lib/redis.js";
 
 const router = express.Router();
 
@@ -82,6 +83,8 @@ router.post("/in", auth, requirePermission("inventory"), async (req, res) => {
       after: { stock: after, ...(priceAfter !== null ? { price: priceAfter } : {}) }
     });
   } catch {}
+  await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.status(201).json({ productId: doc._id.toString(), variantSku, before, added: qty, after, priceBefore, priceAfter });
 });
 
@@ -167,6 +170,8 @@ router.post("/bulk-in", auth, requirePermission("inventory"), async (req, res) =
     results.push({ productId: doc._id.toString(), variantSku, added: qty, priceBefore, priceAfter });
   }
 
+  await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
   res.status(200).json({ success: true, updated: results.length, results });
 });
 
