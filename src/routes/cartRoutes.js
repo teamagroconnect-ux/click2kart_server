@@ -6,6 +6,30 @@ import Product from "../models/Product.js";
 
 const router = express.Router();
 
+const getPackSize = (product) => Math.max(1, Math.round(Number(product?.packSize || 1)));
+
+const getEffectiveMoq = (product) => getPackSize(product);
+
+const normalizeQty = (qty, product) => {
+  const pack = getPackSize(product);
+  const moq = getEffectiveMoq(product);
+  let n = Math.round(Number(qty) || 0);
+  if (n <= 0) return 0;
+  if (pack > 1) {
+    n = Math.round(n / pack) * pack;
+    if (n < pack) n = pack;
+  }
+  return Math.max(moq, n);
+};
+
+const findVariant = (product, variantSku) => {
+  if (!variantSku) return null;
+  const key = String(variantSku);
+  return (product.variants || []).find(
+    (v) => String(v.sku || "") === key || String(v._id || "") === key
+  ) || null;
+};
+
 const serializeCart = async (cart) => {
   if (!cart) return { items: [] };
   await cart.populate("items.product", "name price gst images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp packSize");
@@ -33,7 +57,7 @@ const serializeCart = async (cart) => {
             stock: v.stock ?? 0,
             sku: v.sku,
             image: (v.images?.[0]?.url || it.product.images?.[0]?.url || ""),
-            minOrderQty: it.product.minOrderQty || 0
+            minOrderQty: getEffectiveMoq(it.product)
           };
         }
       }
@@ -44,7 +68,7 @@ const serializeCart = async (cart) => {
         gst: it.product.gst || 0,
         stock: it.product.stock,
         image: it.product.images?.[0]?.url || "",
-        minOrderQty: it.product.minOrderQty || 0
+        minOrderQty: getEffectiveMoq(it.product)
       };
     })
   };
@@ -59,48 +83,43 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/add", async (req, res) => {
-  console.log('=== /api/cart/add called ===')
-  console.log('req.body:', req.body)
-  
-  const { productId, variantSku, quantity } = req.body || {};
+  const { productId, variantSku, quantity, setAbsolute } = req.body || {};
   const qty = Math.round(Number(quantity || 1));
-  
-  console.log('Parsed values:', { productId, variantSku, quantity, qty })
-  
+
   if (!mongoose.isValidObjectId(productId) || !Number.isFinite(qty) || qty <= 0) {
-    console.log('Validation failed:', { 
-      validObjectId: mongoose.isValidObjectId(productId), 
-      validQty: Number.isFinite(qty), 
-      qtyPositive: qty > 0 
-    })
     return res.status(400).json({ error: "invalid_payload" });
   }
 
   const product = await Product.findOne({ _id: productId, isActive: true });
   if (!product) return res.status(404).json({ error: "product_not_found" });
+
   let variant = null;
+  let storedVariantKey = variantSku ? String(variantSku) : undefined;
   if (variantSku) {
-    variant = (product.variants || []).find(v => v.sku === String(variantSku));
-    if (!variant || !variant.isActive) return res.status(404).json({ error: "variant_not_found" });
+    variant = findVariant(product, variantSku);
+    if (!variant || variant.isActive === false) return res.status(404).json({ error: "variant_not_found" });
+    storedVariantKey = variant.sku ? String(variant.sku) : String(variant._id);
   }
 
-  const minQty = Math.max(1, Math.round(Number(product.minOrderQty || 0)));
-  const effQty = Math.max(qty, minQty);
+  const effQty = normalizeQty(qty, product);
 
   let cart = await Cart.findOne({ customer: req.user.id });
   if (!cart) {
     cart = await Cart.create({ customer: req.user.id, items: [] });
   }
 
-  const existing = cart.items.find((it) => it.product.toString() === productId && String(it.variantSku || "") === String(variantSku || ""));
+  const existing = cart.items.find(
+    (it) => it.product.toString() === productId && String(it.variantSku || "") === String(storedVariantKey || "")
+  );
   const currentQty = existing ? existing.quantity : 0;
   const available = variant ? (variant.stock || 0) : product.stock;
-  if (currentQty + effQty > available) return res.status(400).json({ error: "insufficient_stock" });
+  const nextQty = setAbsolute ? effQty : currentQty + effQty;
+  if (nextQty > available) return res.status(400).json({ error: "insufficient_stock" });
 
   if (existing) {
-    existing.quantity += effQty;
+    existing.quantity = nextQty;
   } else {
-    cart.items.push({ product: product._id, variantSku: variantSku || undefined, quantity: effQty });
+    cart.items.push({ product: product._id, variantSku: storedVariantKey || undefined, quantity: nextQty });
   }
   await cart.save();
 
@@ -128,8 +147,7 @@ router.put("/update", async (req, res) => {
     if (!product) return res.status(404).json({ error: "product_not_found" });
     const variant = variantSku ? (product.variants || []).find(v => v.sku === String(variantSku)) : null;
     const available = variant ? (variant.stock || 0) : product.stock;
-    const minQty = Math.max(1, Number(product.minOrderQty || 0));
-    const effQty = Math.max(minQty, qty);
+    const effQty = normalizeQty(qty, product);
     if (effQty > available) return res.status(400).json({ error: "insufficient_stock" });
     cart.items[idx].quantity = effQty;
   }
