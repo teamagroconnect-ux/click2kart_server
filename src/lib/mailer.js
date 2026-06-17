@@ -43,8 +43,8 @@ export const renderMail = ({ heading, subheading, blocks, highlight, items, tota
   const year = new Date().getFullYear();
   const h = highlight ? `<div style="margin:24px 0;padding:20px;border:1px solid #e9d5ff;border-radius:16px;background:#f5f3ff;font-weight:800;color:#7c3aed;text-align:center;font-size:18px;letter-spacing:0.02em">${highlight}</div>` : "";
   const b = (blocks || []).map(({ label, value }) => `
-    <div style="display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #f1f5f9">
-      <div style="font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:.1em;text-transform:uppercase">${label}</div>
+    <div style="display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #f1f5f9;">
+      <div style="font-size:11px;color:#94a3b8;font-weight:800;letter-spacing:.1em;text-transform:uppercase;">${label}:</div>
       <div style="font-size:14px;color:#1e293b;font-weight:700;text-align:right">${value}</div>
     </div>
   `).join("");
@@ -164,18 +164,18 @@ export const sendPartnerWelcome = async (partner) => {
 
       <div style="background:#f8fafc; border:1px solid #f1f5f9; border-radius:16px; padding:24px; margin-bottom:24px;">
         <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #f1f5f9;">
-          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Name</div>
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Name:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">${partner.name}</div>
         </div>
         ${partner.email ? `
         <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #f1f5f9;">
-          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Email</div>
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Email:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">${partner.email}</div>
         </div>
         ` : ''}
         ${partner.phone ? `
         <div style="display:flex; justify-content:space-between; padding:12px 0;">
-          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Phone</div>
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Phone:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">${partner.phone}</div>
         </div>
         ` : ''}
@@ -248,18 +248,18 @@ export const sendPartnerCoupon = async (partner, coupon) => {
       <div style="background:#f8fafc; border:1px solid #f1f5f9; border-radius:16px; padding:24px; margin-bottom:24px;">
         <h3 style="margin:0 0 12px; color:#1e293b; font-size:16px; font-weight:800;">Coupon Details</h3>
         <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #f1f5f9;">
-          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Discount</div>
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Discount:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">${coupon.type === 'PERCENT' ? coupon.value + '%' : '₹' + coupon.value}</div>
         </div>
         ${coupon.minOrderValue ? `
         <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #f1f5f9;">
-          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Min Order</div>
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Min Order:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">₹${coupon.minOrderValue}</div>
         </div>
         ` : ''}
         ${coupon.maxDiscount ? `
         <div style="display:flex; justify-content:space-between; padding:12px 0;">
-          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Max Discount</div>
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Max Discount:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">₹${coupon.maxDiscount}</div>
         </div>
         ` : ''}
