@@ -138,7 +138,7 @@ router.put("/profile", auth, requireRole("partner"), async (req, res) => {
   const partner = await Partner.findById(req.user.id);
   if (!partner) return res.status(404).json({ error: "not_found" });
 
-  const { name, phone, bloodGroup, address, city, district, state, pincode, bankAccount } = req.body || {};
+  const { name, phone, bloodGroup, address, city, district, state, pincode, bankAccount, profilePicture } = req.body || {};
   const update = {};
 
   if (name != null) update.name = String(name).trim();
@@ -150,6 +150,7 @@ router.put("/profile", auth, requireRole("partner"), async (req, res) => {
   if (state != null) update.state = String(state).trim();
   if (pincode != null) update.pincode = String(pincode).trim();
   if (bankAccount != null) update.bankAccount = bankAccount;
+  if (profilePicture != null) update.profilePicture = String(profilePicture).trim();
 
   const updated = await Partner.findByIdAndUpdate(req.user.id, update, { new: true });
   res.json(updated);

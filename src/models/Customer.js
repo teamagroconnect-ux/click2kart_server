@@ -20,7 +20,8 @@ const customerSchema = new mongoose.Schema(
       city: { type: String, default: "" },
       district: { type: String, default: "" },
       state: { type: String, default: "" },
-      pincode: { type: String, default: "" }
+      pincode: { type: String, default: "" },
+      profilePicture: { type: String, default: "" }
     },
     isKycComplete: { type: Boolean, default: false }
   },

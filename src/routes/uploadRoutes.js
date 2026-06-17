@@ -8,7 +8,7 @@ import { Image } from "../models/Image.js";
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-router.post("/image", auth, requireRole("admin"), upload.single("file"), async (req, res) => {
+router.post("/image", auth, upload.single("file"), async (req, res) => {
   if (!configureCloudinary()) return res.status(503).json({ error: "cloudinary_not_configured" });
   if (!req.file) return res.status(400).json({ error: "missing_file" });
   try {
@@ -18,7 +18,8 @@ router.post("/image", auth, requireRole("admin"), upload.single("file"), async (
       return res.json({ url: existing.url, publicId: existing.publicId });
     }
 
-    const result = await uploadBuffer(req.file.buffer, "products");
+    const folder = req.user.role === "admin" ? "products" : "profile-pictures";
+    const result = await uploadBuffer(req.file.buffer, folder);
     
     await Image.create({ hash, url: result.url, publicId: result.publicId });
 
