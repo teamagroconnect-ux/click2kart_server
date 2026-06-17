@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import Category from "../models/Category.js";
 import Brand from "../models/Brand.js";
@@ -101,6 +102,24 @@ router.get("/brands", async (req, res) => {
     return await Brand.find(filter).sort({ name: 1 });
   }, 86400); // 24 hours
   res.json(items);
+});
+
+// Public: Get partner details by ID for verification
+router.get("/partner/:id", async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+  const partner = await Partner.findById(req.params.id).select({
+    // Don't send sensitive data
+    password: 0,
+    otp: 0,
+    otpExpiry: 0,
+    bankAccount: 0
+  });
+  if (!partner) {
+    return res.status(404).json({ error: "partner_not_found" });
+  }
+  res.json(partner);
 });
 
 // Send OTP for Partner Login (via Email)
