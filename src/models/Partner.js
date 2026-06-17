@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 
+const generateInviteCode = () => {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+};
+
 const partnerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -11,6 +15,7 @@ const partnerSchema = new mongoose.Schema(
     otpExpiry: { type: Date },
     isActive: { type: Boolean, default: false },
     isVerified: { type: Boolean, default: false },
+    inviteCode: { type: String, trim: true, unique: true },
     businessName: { type: String, trim: true },
   gstNumber: { type: String, trim: true, uppercase: true },
   panNumber: { type: String, trim: true, uppercase: true },
@@ -36,6 +41,17 @@ const partnerSchema = new mongoose.Schema(
 partnerSchema.index({ email: 1 }, { sparse: true });
 
 partnerSchema.pre("save", async function (next) {
+  if (!this.inviteCode) {
+    let code;
+    let isUnique = false;
+    while (!isUnique) {
+      code = generateInviteCode();
+      const existing = await mongoose.models.Partner?.findOne({ inviteCode: code });
+      if (!existing) isUnique = true;
+    }
+    this.inviteCode = code;
+  }
+  
   if (!this.isModified("password")) return next();
   if (!this.password) return next();
   const salt = await bcrypt.genSalt(10);
