@@ -60,4 +60,32 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
   res.json({ isKycComplete: user.isKycComplete, kyc: user.kyc });
 });
 
+router.put("/change-password", auth, requireRole("customer"), async (req, res) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body;
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return res.status(400).json({ error: "all_fields_required" });
+  }
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ error: "passwords_do_not_match" });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: "password_too_short" });
+  }
+
+  const user = await Customer.findById(req.user.id);
+  if (!user) return res.status(404).json({ error: "not_found" });
+
+  if (user.password) {
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({ error: "incorrect_password" });
+    }
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  res.json({ success: true });
+});
+
 export default router;

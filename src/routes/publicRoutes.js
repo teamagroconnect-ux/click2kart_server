@@ -354,10 +354,38 @@ router.put("/partner/profile", (await import("../middleware/auth.js")).auth, asy
   if (profilePicture !== undefined) updateData.profilePicture = profilePicture;
   if (idCard !== undefined) updateData.idCard = idCard;
   
-  await Partner.findByIdAndUpdate(req.user.id, updateData, { new: true });
+  const updatedPartner = await Partner.findByIdAndUpdate(req.user.id, updateData, { new: true }).lean();
   await bumpCacheVersion(`partner:summary:${req.user.id}`);
   
-  res.json({ message: "profile_updated" });
+  // Merge summary with updated profile
+  const summary = await computeSummaryForPartner(updatedPartner);
+  res.json({
+    ...updatedPartner,
+    ...summary
+  });
+});
+
+// Change Partner Password
+router.put("/partner/change-password", (await import("../middleware/auth.js")).auth, async (req, res) => {
+  if (req.user.role !== 'partner') return res.status(403).json({ error: 'forbidden' });
+  
+  const { currentPassword, newPassword } = req.body;
+  
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'missing_fields' });
+  }
+  
+  const partner = await Partner.findById(req.user.id);
+  if (!partner) return res.status(404).json({ error: 'not_found' });
+  
+  if (partner.password !== currentPassword) {
+    return res.status(401).json({ error: 'invalid_current_password' });
+  }
+  
+  partner.password = newPassword;
+  await partner.save();
+  
+  res.json({ message: 'password_updated' });
 });
 
 export default router;
