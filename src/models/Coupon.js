@@ -21,7 +21,8 @@ const couponSchema = new mongoose.Schema(
     totalSales: { type: Number, default: 0 },
     password: { type: String, trim: true }, // Added for partner portal security
     otp: { type: String },
-    otpExpiry: { type: Date }
+    otpExpiry: { type: Date },
+    isPremium: { type: Boolean, default: false } // Premium for partner coupons
   },
   { timestamps: true }
 );

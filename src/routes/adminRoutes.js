@@ -75,6 +75,18 @@ router.put("/staff/:id", auth, requireRole("admin"), async (req, res) => {
 
 // Delete staff
 router.delete("/staff/:id", auth, requireRole("admin"), async (req, res) => {
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   await Admin.findByIdAndDelete(req.params.id);
   res.json({ deleted: true });
 });
@@ -236,6 +248,19 @@ router.get("/customers/:id", auth, requirePermission("customers"), async (req, r
 
 router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => {
   const id = req.params.id;
+  
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   const removed = await Customer.findByIdAndDelete(id);
   if (!removed) return res.status(404).json({ error: "not_found" });
   res.json({ deleted: true });

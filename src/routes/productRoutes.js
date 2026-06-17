@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Product from "../models/Product.js";
 import AuditLog from "../models/AuditLog.js";
 import Category from "../models/Category.js";
+import Admin from "../models/Admin.js";
 import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import StockTxn from "../models/StockTxn.js";
 import Bill from "../models/Bill.js";
@@ -684,6 +685,19 @@ router.put("/:id/variants/:vid", auth, requirePermission("products"), async (req
 
 router.delete("/:id/variants/:vid", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   const p = await Product.findById(req.params.id);
   if (!p || !p.isActive) return res.status(404).json({ error: "not_found" });
   
@@ -733,6 +747,19 @@ router.patch("/:id/variants/:vid/stock", auth, requirePermission("inventory"), a
 
 router.delete("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   const updated = await Product.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json({ success: true });

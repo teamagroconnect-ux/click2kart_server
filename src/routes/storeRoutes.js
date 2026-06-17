@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import Store from "../models/Store.js";
+import Admin from "../models/Admin.js";
 
 const router = express.Router();
 
@@ -42,6 +43,19 @@ router.post("/:id/sections", auth, requirePermission("stores"), async (req, res)
 
 router.delete("/:id/sections", auth, requirePermission("stores"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   const section = (req.body?.name || "").toString().trim();
   const doc = await Store.findById(req.params.id);
   if (!doc) return res.status(404).json({ error: "not_found" });

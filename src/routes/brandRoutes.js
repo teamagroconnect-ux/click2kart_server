@@ -1,6 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Brand from "../models/Brand.js";
+import Admin from "../models/Admin.js";
 import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import { getOrSetCache, delCache, bumpCacheVersion } from "../lib/redis.js";
 
@@ -51,6 +52,19 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   const updated = await Brand.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   await delCache("brands:all:*");

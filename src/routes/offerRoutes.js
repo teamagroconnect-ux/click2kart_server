@@ -1,5 +1,6 @@
 import express from "express";
 import Offer from "../models/Offer.js";
+import Admin from "../models/Admin.js";
 import { auth, requireRole } from "../middleware/auth.js";
 
 const router = express.Router();
@@ -33,6 +34,18 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
 });
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
   await Offer.findByIdAndDelete(req.params.id);
   res.json({ success: true });
 });

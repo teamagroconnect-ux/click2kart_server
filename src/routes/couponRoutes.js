@@ -1,6 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Coupon from "../models/Coupon.js";
+import Admin from "../models/Admin.js";
 import { auth, requireRole } from "../middleware/auth.js";
 import { sendPartnerCoupon } from "../lib/mailer.js";
 
@@ -44,7 +45,8 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     partnerCommissionPercent: Number(partnerCommissionPercent || 0),
     maxTotalSales: Number(maxTotalSales || 0),
     password: password ? String(password).trim() : undefined,
-    isActive: isActive === false ? false : true
+    isActive: isActive === false ? false : true,
+    isPremium: !!(partnerRef || pName || pEmail) // Premium if partner is assigned
   });
   
   // Send email to partner if partner assigned
@@ -121,7 +123,13 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
     if (dup) return res.status(409).json({ error: "duplicate_code" });
   }
   
-  const updated = await Coupon.findByIdAndUpdate(req.params.id, payload, { new: true });
+  // Set isPremium based on partner data
+  const hasPartner = !!(payload.partner || payload.partnerName || payload.partnerEmail);
+  const updated = await Coupon.findByIdAndUpdate(
+    req.params.id,
+    { ...payload, isPremium: hasPartner },
+    { new: true }
+  );
   if (!updated) return res.status(404).json({ error: "not_found" });
   
   // Send email if partner was just added/updated
@@ -179,8 +187,24 @@ router.post("/validate", auth, async (req, res) => {
   });
 });
 
+// Verify deletion password before coupon deletion
+
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
   
   const coupon = await Coupon.findById(req.params.id);
   if (!coupon) return res.status(404).json({ error: "not_found" });
