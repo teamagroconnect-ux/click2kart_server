@@ -144,7 +144,7 @@ router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req,
   const token = jwt.sign(
     { id: user._id.toString(), role: "customer", email: user.email },
     process.env.JWT_SECRET,
-    { expiresIn: "60m" }
+    { expiresIn: "7d" }
   );
 
   res.json({
@@ -234,7 +234,7 @@ router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 60
   const token = jwt.sign(
     { id: user._id.toString(), role: "customer", email: user.email },
     process.env.JWT_SECRET,
-    { expiresIn: "60m" }
+    { expiresIn: "7d" }
   );
   res.json({
     token,

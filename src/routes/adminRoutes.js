@@ -9,6 +9,25 @@ import Admin from "../models/Admin.js";
 
 const router = express.Router();
 
+// Verify deletion password
+router.post("/verify-deletion-password", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: "Password required" });
+
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) return res.status(404).json({ error: "Admin not found" });
+
+    const isMatch = await admin.compareDeletionPassword(password);
+    if (!isMatch) return res.status(401).json({ error: "Invalid password" });
+
+    res.json({ valid: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // Get all staff members
 router.get("/staff", auth, requireRole("admin"), async (req, res) => {
   const staff = await Admin.find({ role: "staff" }).select("-password");
@@ -168,6 +187,27 @@ router.get("/settings", auth, requireRole("admin"), (req, res) => {
     companyEmail: process.env.COMPANY_EMAIL || "",
     lowStockThreshold: Number(process.env.LOW_STOCK_THRESHOLD ?? 5)
   });
+});
+
+// Update admin deletion password
+router.put("/deletion-password", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) return res.status(404).json({ error: "Admin not found" });
+
+    admin.deletionPassword = newPassword;
+    await admin.save();
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
 router.get("/customers", auth, requirePermission("customers"), async (req, res) => {
