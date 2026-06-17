@@ -55,7 +55,7 @@ router.post("/login", rateLimit("admin-login", 5, 900), async (req, res) => {
 
 // CUSTOMER SIGNUP - Step 1: Send OTP
 router.post("/customer/signup", rateLimit("customer-signup", 3, 600), async (req, res) => {
-  const { name, email, phone, password } = req.body || {};
+  const { name, email, phone, password, inviteCode } = req.body || {};
   if (!name || !email || !phone || !password) return res.status(400).json({ error: "missing_fields" });
   if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
 
@@ -67,7 +67,7 @@ router.post("/customer/signup", rateLimit("customer-signup", 3, 600), async (req
 
   await OTP.findOneAndUpdate(
     { email: email.toLowerCase(), purpose: "SIGNUP" },
-    { otp, expiresAt, metadata: { name, phone, password } },
+    { otp, expiresAt, metadata: { name, phone, password, inviteCode } },
     { upsert: true }
   );
 
@@ -87,14 +87,15 @@ router.post("/customer/verify-otp", async (req, res) => {
   const record = await OTP.findOne({ email: email.toLowerCase(), otp, purpose: "SIGNUP" });
   if (!record) return res.status(400).json({ error: "invalid_otp" });
 
-  const { name, phone, password } = record.metadata;
+  const { name, phone, password, inviteCode } = record.metadata;
   const customer = await Customer.create({
     name,
     email: email.toLowerCase(),
     phone,
     password,
     isVerified: true,
-    isActive: false
+    isActive: false,
+    kyc: { partnerInviteCode: inviteCode || "" }
   });
 
   await OTP.deleteOne({ _id: record._id });

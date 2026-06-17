@@ -95,6 +95,7 @@ export const renderMail = ({ heading, subheading, blocks, highlight, items, tota
       <div style="margin-top:40px;padding:24px;background:#f8fafc;border-radius:16px;color:#64748b;font-size:13px;line-height:1.6;text-align:center;border:1px solid #f1f5f9">
         This is a premium automated message from <strong>${company}</strong>. 
         <br/>If you have any questions, our support team is here to help.
+        <br/><br/>Mail us at: <a href="mailto:support@click2kart.net" style="color:#7c3aed;font-weight:700;text-decoration:none">support@click2kart.net</a>
       </div>
       <div style="margin-top:32px;text-align:center;font-size:12px;color:#cbd5e1;font-weight:600;letter-spacing:0.05em">
         © ${year} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
@@ -197,7 +198,8 @@ export const sendPartnerWelcome = async (partner) => {
 
       <div style="margin-top:32px; text-align:center; color:#94a3b8; font-size:13px; line-height:1.6;">
         If you have any questions, our support team is here to help.
-        <br/>
+        <br/>Mail us at: <a href="mailto:support@click2kart.net" style="color:#7c3aed;font-weight:700;text-decoration:none">support@click2kart.net</a>
+        <br/><br/>
         &copy; ${new Date().getFullYear()} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
       </div>
     </div>
@@ -265,7 +267,8 @@ export const sendPartnerCoupon = async (partner, coupon) => {
 
       <div style="margin-top:32px; text-align:center; color:#94a3b8; font-size:13px; line-height:1.6;">
         Share this coupon with your referrals to start earning commissions on every sale!
-        <br/>
+        <br/>If you have any questions, mail us at: <a href="mailto:support@click2kart.net" style="color:#7c3aed;font-weight:700;text-decoration:none">support@click2kart.net</a>
+        <br/><br/>
         &copy; ${new Date().getFullYear()} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
       </div>
     </div>

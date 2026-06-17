@@ -60,6 +60,19 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
   res.json({ isKycComplete: user.isKycComplete, kyc: user.kyc });
 });
 
+router.put("/profile", auth, requireRole("customer"), async (req, res) => {
+  const { address, name, phone } = req.body;
+  const user = await Customer.findById(req.user.id);
+  if (!user) return res.status(404).json({ error: "not_found" });
+
+  if (address !== undefined) user.address = address;
+  if (typeof name === "string") user.name = name.trim();
+  if (typeof phone === "string") user.phone = phone.trim();
+
+  await user.save();
+  res.json({ success: true });
+});
+
 router.put("/change-password", auth, requireRole("customer"), async (req, res) => {
   const { currentPassword, newPassword, confirmPassword } = req.body;
   if (!currentPassword || !newPassword || !confirmPassword) {

@@ -3,6 +3,8 @@ import { auth, requireRole } from "../middleware/auth.js";
 import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
+import Partner from "../models/Partner.js";
+import Customer from "../models/Customer.js";
 
 const router = express.Router();
 
@@ -81,6 +83,102 @@ router.post("/:code/payout", auth, requireRole("admin"), async (req, res) => {
   });
   const summary = await computeSummaryForCoupon(coupon);
   res.status(201).json({ payout, summary });
+});
+
+// Partner: Get own profile and dashboard data
+router.get("/me", auth, requireRole("partner"), async (req, res) => {
+  const partner = await Partner.findById(req.user.id);
+  if (!partner) return res.status(404).json({ error: "not_found" });
+
+  // Get partner coupons
+  const coupons = await Coupon.find({ partner: partner._id }).sort({ createdAt: -1 });
+
+  // Get partner referred orders
+  const couponCodes = coupons.map(c => c.code);
+  const referredOrders = await Bill.find({ couponCode: { $in: couponCodes } }).sort({ createdAt: -1 });
+
+  // Calculate totals
+  const totalSales = referredOrders.reduce((sum, o) => sum + (o.payable || 0), 0);
+  let totalCommission = 0;
+  const couponsWithStats = await Promise.all(coupons.map(async (coupon) => {
+    const summary = await computeSummaryForCoupon(coupon);
+    totalCommission += summary.totalCommission;
+    return {
+      ...coupon.toObject(),
+      sales: summary.totalSales,
+      usageCount: referredOrders.filter(o => o.couponCode === coupon.code).length,
+      status: coupon.isActive ? "active" : "inactive"
+    };
+  }));
+
+  // Get partner payouts
+  const payouts = await PartnerPayout.find({ couponCode: { $in: couponCodes } }).sort({ createdAt: -1 });
+  const totalPaid = payouts.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  // Get referred businesses (customers who used partner's invite code)
+  const referredBusinesses = await Customer.find({
+    "kyc.partnerInviteCode": { $in: coupons.map(c => c.code) }
+  }).sort({ createdAt: -1 });
+
+  res.json({
+    ...partner.toObject(),
+    totalSales,
+    totalCommission,
+    totalPaid,
+    balance: totalCommission - totalPaid,
+    coupons: couponsWithStats,
+    referredOrders,
+    payouts,
+    referredBusinesses
+  });
+});
+
+// Partner: Update own profile
+router.put("/profile", auth, requireRole("partner"), async (req, res) => {
+  const partner = await Partner.findById(req.user.id);
+  if (!partner) return res.status(404).json({ error: "not_found" });
+
+  const { name, phone, bloodGroup, address, city, district, state, pincode, bankAccount } = req.body || {};
+  const update = {};
+
+  if (name != null) update.name = String(name).trim();
+  if (phone != null) update.phone = String(phone).trim();
+  if (bloodGroup != null) update.bloodGroup = String(bloodGroup).trim().toUpperCase();
+  if (address != null) update.address = String(address).trim();
+  if (city != null) update.city = String(city).trim();
+  if (district != null) update.district = String(district).trim();
+  if (state != null) update.state = String(state).trim();
+  if (pincode != null) update.pincode = String(pincode).trim();
+  if (bankAccount != null) update.bankAccount = bankAccount;
+
+  const updated = await Partner.findByIdAndUpdate(req.user.id, update, { new: true });
+  res.json(updated);
+});
+
+// Partner: Change password
+router.put("/change-password", auth, requireRole("partner"), async (req, res) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body || {};
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    return res.status(400).json({ error: "missing_fields" });
+  }
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ error: "passwords_do_not_match" });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: "password_too_short" });
+  }
+
+  const partner = await Partner.findById(req.user.id);
+  if (!partner) return res.status(404).json({ error: "not_found" });
+
+  if (partner.password) {
+    const isValid = await partner.comparePassword(currentPassword);
+    if (!isValid) return res.status(401).json({ error: "invalid_password" });
+  }
+
+  partner.password = newPassword;
+  await partner.save();
+  res.json({ success: true });
 });
 
 export default router;
