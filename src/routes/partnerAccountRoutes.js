@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import { auth, requireRole } from "../middleware/auth.js";
 import Partner from "../models/Partner.js";
+import { sendPartnerWelcome } from "../lib/mailer.js";
 
 const router = express.Router();
 
@@ -17,8 +18,17 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     name: String(name).trim(),
     email: email ? String(email).trim().toLowerCase() : "",
     phone: phone ? String(phone).trim() : "",
-    password: password ? String(password).trim() : undefined
+    password: password ? String(password).trim() : undefined,
+    isActive: true
   });
+  
+  // Send welcome email
+  try {
+    await sendPartnerWelcome(doc);
+  } catch (emailErr) {
+    console.error("Failed to send welcome email:", emailErr);
+  }
+  
   res.status(201).json(doc);
 });
 

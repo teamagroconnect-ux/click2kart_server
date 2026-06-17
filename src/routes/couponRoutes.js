@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import Coupon from "../models/Coupon.js";
 import { auth, requireRole } from "../middleware/auth.js";
+import { sendPartnerCoupon } from "../lib/mailer.js";
 
 const router = express.Router();
 
@@ -14,12 +15,13 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
   const exists = await Coupon.findOne({ code });
   if (exists) return res.status(409).json({ error: "duplicate_code" });
   let partnerRef = undefined;
+  let partner = null;
   let pName = partnerName || "";
   let pEmail = partnerEmail || "";
   let pPhone = partnerPhone || "";
   if (partnerId) {
     if (!mongoose.isValidObjectId(partnerId)) return res.status(400).json({ error: "invalid_partner" });
-    const partner = await (await import("../models/Partner.js")).default.findById(partnerId);
+    partner = await (await import("../models/Partner.js")).default.findById(partnerId);
     if (!partner) return res.status(404).json({ error: "partner_not_found" });
     partnerRef = partner._id;
     if (!pName) pName = partner.name || "";
@@ -44,6 +46,23 @@ router.post("/", auth, requireRole("admin"), async (req, res) => {
     password: password ? String(password).trim() : undefined,
     isActive: isActive === false ? false : true
   });
+  
+  // Send email to partner if partner assigned
+  if (partner) {
+    try {
+      await sendPartnerCoupon(partner, doc);
+    } catch (emailErr) {
+      console.error("Failed to send coupon email:", emailErr);
+    }
+  } else if (pEmail) {
+    // If no partnerId but we have partnerEmail, send email too
+    try {
+      await sendPartnerCoupon({ name: pName, email: pEmail }, doc);
+    } catch (emailErr) {
+      console.error("Failed to send coupon email:", emailErr);
+    }
+  }
+  
   res.status(201).json(doc);
 });
 
@@ -76,6 +95,9 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (req.body?.partnerCommissionPercent != null) payload.partnerCommissionPercent = Number(req.body.partnerCommissionPercent);
   if (req.body?.maxTotalSales != null) payload.maxTotalSales = Number(req.body.maxTotalSales);
   if (req.body?.password !== undefined) payload.password = req.body.password ? String(req.body.password).trim() : undefined;
+  
+  let partnerToEmail = null;
+  
   if (req.body?.partnerId !== undefined) {
     if (req.body.partnerId === "") {
       payload.partner = null;
@@ -90,14 +112,33 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
       payload.partnerName = partner.name || "";
       payload.partnerEmail = partner.email || "";
       payload.partnerPhone = partner.phone || "";
+      partnerToEmail = partner;
     }
   }
+  
   if (payload.code) {
     const dup = await Coupon.findOne({ code: payload.code, _id: { $ne: req.params.id } });
     if (dup) return res.status(409).json({ error: "duplicate_code" });
   }
+  
   const updated = await Coupon.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
+  
+  // Send email if partner was just added/updated
+  if (partnerToEmail) {
+    try {
+      await sendPartnerCoupon(partnerToEmail, updated);
+    } catch (emailErr) {
+      console.error("Failed to send coupon email:", emailErr);
+    }
+  } else if (payload.partnerEmail) {
+    try {
+      await sendPartnerCoupon({ name: payload.partnerName, email: payload.partnerEmail }, updated);
+    } catch (emailErr) {
+      console.error("Failed to send coupon email:", emailErr);
+    }
+  }
+  
   res.json(updated);
 });
 
