@@ -17,7 +17,7 @@ router.get("/me", auth, async (req, res) => {
     });
   }
 
-  const user = await Customer.findById(req.user.id).select("name email phone address isKycComplete kyc");
+  const user = await Customer.findById(req.user.id).select("name email phone address isKycComplete kyc dob");
   if (!user) return res.status(404).json({ error: "not_found" });
   res.json({
     id: user._id.toString(),
@@ -27,6 +27,7 @@ router.get("/me", auth, async (req, res) => {
     defaultAddress: user.address || "",
     isKycComplete: !!user.isKycComplete,
     kyc: user.kyc || {},
+    dob: user.dob,
     role: "customer"
   });
 });
@@ -36,7 +37,7 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
-  const allowed = ["businessName", "gstin", "pan", "addressLine1", "addressLine2", "city", "district", "state", "pincode", "profilePicture"];
+  const allowed = ["businessName", "gstin", "pan", "panCard", "aadhaarCard", "addressLine1", "addressLine2", "city", "district", "state", "pincode", "profilePicture"];
   const restricted = ["businessName", "gstin", "pan"];
   
   const kyc = { ...(user.kyc || {}) };
@@ -61,13 +62,14 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
 });
 
 router.put("/profile", auth, requireRole("customer"), async (req, res) => {
-  const { address, name, phone } = req.body;
+  const { address, name, phone, dob } = req.body;
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
   if (address !== undefined) user.address = address;
   if (typeof name === "string") user.name = name.trim();
   if (typeof phone === "string") user.phone = phone.trim();
+  if (dob) user.dob = new Date(dob);
 
   await user.save();
   res.json({ success: true });

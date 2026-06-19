@@ -11,10 +11,13 @@ const customerSchema = new mongoose.Schema(
     purchaseHistory: [{ type: mongoose.Schema.Types.ObjectId, ref: "Bill" }],
     isVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    dob: { type: Date },
     kyc: {
       businessName: { type: String, default: "" },
       gstin: { type: String, default: "" },
       pan: { type: String, default: "" },
+      panCard: { type: String, default: "" },
+      aadhaarCard: { type: String, default: "" },
       addressLine1: { type: String, default: "" },
       addressLine2: { type: String, default: "" },
       city: { type: String, default: "" },

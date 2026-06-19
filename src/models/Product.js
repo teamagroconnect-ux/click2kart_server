@@ -18,7 +18,7 @@ const productSchema = new mongoose.Schema(
     subCategory: { type: mongoose.Schema.Types.ObjectId, ref: "SubCategory", index: true },
     images: { type: [imageSchema], default: [] },
     stock: { type: Number, required: true, min: 0 },
-    weight: { type: Number, default: 0, min: 0 }, // weight in grams
+    weight: { type: Number, required: true, min: 0 }, // weight in grams
     volumetricWeight: {
       type: {
         length: { type: Number, default: 0, min: 0 }, // length in cm

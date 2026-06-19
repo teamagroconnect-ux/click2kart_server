@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { connectIfConfigured } from "./lib/db.js";
 import { connectRedis } from "./lib/redis.js";
 import { warmCache } from "./lib/cacheWarmer.js";
+import { startBirthdayScheduler } from "./lib/birthdayScheduler.js";
 import http from "http";
 import { initSocket } from "./lib/socket.js";
 import Admin from "./models/Admin.js";
@@ -88,17 +89,18 @@ const ensureDefaultAdmin = async () => {
   console.log(`Default admin created with email ${email}`);
 };
 
-const start = async () => {
+const start = async () =&gt; {
   await connectIfConfigured();
   await connectRedis();
   
   // Warm cache on start (async to not block server start)
-  warmCache().catch(err => console.error("Warming Error:", err));
+  warmCache().catch(err =&gt; console.error("Warming Error:", err));
 
   await ensureDefaultAdmin();
+  startBirthdayScheduler();
   const server = http.createServer(app);
   initSocket(server);
-  server.listen(PORT, () => {
+  server.listen(PORT, () =&gt; {
     console.log(`server running on port ${PORT}`);
   });
 };

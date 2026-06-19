@@ -138,7 +138,7 @@ router.put("/profile", auth, requireRole("partner"), async (req, res) => {
   const partner = await Partner.findById(req.user.id);
   if (!partner) return res.status(404).json({ error: "not_found" });
 
-  const { name, phone, bloodGroup, address, city, district, state, pincode, bankAccount, profilePicture } = req.body || {};
+  const { name, phone, bloodGroup, address, city, district, state, pincode, bankAccount, profilePicture, dob, panCard, aadhaarCard } = req.body || {};
   const update = {};
 
   if (name != null) update.name = String(name).trim();
@@ -151,6 +151,9 @@ router.put("/profile", auth, requireRole("partner"), async (req, res) => {
   if (pincode != null) update.pincode = String(pincode).trim();
   if (bankAccount != null) update.bankAccount = bankAccount;
   if (profilePicture != null) update.profilePicture = String(profilePicture).trim();
+  if (dob != null) update.dob = new Date(dob);
+  if (panCard != null) update.panCard = String(panCard).trim();
+  if (aadhaarCard != null) update.aadhaarCard = String(aadhaarCard).trim();
 
   const updated = await Partner.findByIdAndUpdate(req.user.id, update, { new: true });
   res.json(updated);

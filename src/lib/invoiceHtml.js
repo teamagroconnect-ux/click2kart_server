@@ -11,7 +11,7 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
   const companyPhone = company.phone || process.env.COMPANY_PHONE || "+91 79788 80244";
   const companyEmail = company.email || process.env.COMPANY_EMAIL || "support@click2kart.net";
   const companyGst = company.gst || process.env.COMPANY_GST || "29ABCDE1234F1Z5";
-  const logo = company.logo || process.env.COMPANY_LOGO || "click2kart-logo.png";
+  const logo = company.logo || process.env.COMPANY_LOGO || "newlogo.png";
 
   const bank = {
     accName: process.env.COMPANY_BANK_ACCNAME || "Click2Kart Pvt Ltd",
