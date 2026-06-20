@@ -43,7 +43,7 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "uddhab das", time: new Date().toISOString() });
+  res.json({ status: "ok", time: new Date().toISOString() });
 });
 
 app.use("/api/products", productRoutes);
@@ -89,18 +89,18 @@ const ensureDefaultAdmin = async () => {
   console.log(`Default admin created with email ${email}`);
 };
 
-const start = async () =&gt; {
+const start = async () => {
   await connectIfConfigured();
   await connectRedis();
-  
+
   // Warm cache on start (async to not block server start)
-  warmCache().catch(err =&gt; console.error("Warming Error:", err));
+  warmCache().catch(err => console.error("Warming Error:", err));
 
   await ensureDefaultAdmin();
   startBirthdayScheduler();
   const server = http.createServer(app);
   initSocket(server);
-  server.listen(PORT, () =&gt; {
+  server.listen(PORT, () => {
     console.log(`server running on port ${PORT}`);
   });
 };
@@ -108,4 +108,3 @@ const start = async () =&gt; {
 start();
 
 export default app;
-
