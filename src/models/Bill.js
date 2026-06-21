@@ -28,7 +28,15 @@ const gstBreakdownSchema = new mongoose.Schema(
 const billSchema = new mongoose.Schema(
   {
     invoiceNumber: { type: String, required: true, unique: true },
-    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true },
+    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
+    offlineCustomer: { type: mongoose.Schema.Types.ObjectId, ref: "OfflineCustomer" },
+    customerDetails: {
+      name: { type: String, required: true },
+      phone: { type: String, required: true },
+      email: { type: String, default: "" },
+      whatsappNumber: { type: String, default: "" },
+      address: { type: String, default: "" }
+    },
     items: { type: [itemSchema], required: true },
     subtotal: { type: Number, required: true },
     gstTotal: { type: Number, required: true },

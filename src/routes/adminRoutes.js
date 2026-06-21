@@ -1,7 +1,9 @@
 import express from "express";
+import mongoose from "mongoose";
 import { auth, requireRole, requirePermission } from "../middleware/auth.js";
 import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
+import OfflineCustomer from "../models/OfflineCustomer.js";
 import Bill from "../models/Bill.js";
 import { sendEmail } from "../lib/mailer.js";
 
@@ -440,6 +442,58 @@ router.get("/revenue/summary", auth, requireRole("admin"), async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Offline Customers CRUD
+router.get("/offline-customers", auth, requirePermission("offline-customers"), async (req, res) => {
+  const { q } = req.query;
+  const filter = {};
+  if (q) {
+    filter.$or = [
+      { name: { $regex: String(q), $options: "i" },
+      { phone: { $regex: String(q), $options: "i" },
+      { email: { $regex: String(q), $options: "i" }
+    ];
+  }
+  const items = await OfflineCustomer.find(filter).sort({ createdAt: -1 });
+  res.json(items);
+});
+
+router.get("/offline-customers/:id", auth, requirePermission("offline-customers"), async (req, res) => {
+  const customer = await OfflineCustomer.findById(req.params.id);
+  if (!customer) return res.status(404).json({ error: "not_found" });
+  const bills = await Bill.find({ offlineCustomer: req.params.id }).sort({ createdAt: -1 }).limit(10);
+  res.json({ customer, bills });
+});
+
+router.post("/offline-customers", auth, requirePermission("offline-customers"), async (req, res) => {
+  const { name, email, phone, whatsappNumber, address, notes } = req.body;
+  if (!name || !phone) return res.status(400).json({ error: "name and phone required" });
+  const customer = await OfflineCustomer.create({ name, email, phone, whatsappNumber, address, notes });
+  res.status(201).json(customer);
+});
+
+router.put("/offline-customers/:id", auth, requirePermission("offline-customers"), async (req, res) => {
+  const customer = await OfflineCustomer.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  if (!customer) return res.status(404).json({ error: "not_found" });
+  res.json(customer);
+});
+
+router.delete("/offline-customers/:id", auth, requireRole("admin"), async (req, res) => {
+  // Verify deletion password
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: "Deletion password required" });
+  }
+  const admin = await Admin.findById(req.user.id);
+  if (!admin) return res.status(404).json({ error: "Admin not found" });
+  const isValid = await admin.compareDeletionPassword(password);
+  if (!isValid) {
+    return res.status(401).json({ error: "Invalid deletion password" });
+  }
+  
+  await OfflineCustomer.findByIdAndDelete(req.params.id);
+  res.json({ deleted: true });
 });
 
 // SKU Breakdown for a specific Product

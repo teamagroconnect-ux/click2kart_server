@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Customer from "../models/Customer.js";
+import OfflineCustomer from "../models/OfflineCustomer.js";
 import Product from "../models/Product.js";
 import Bill from "../models/Bill.js";
 import Order from "../models/Order.js";
@@ -14,23 +15,42 @@ const lowStockAlertCache = new Set(); // Track product IDs that recently trigger
 export const createBillFromData = async ({ customerData, items, paymentType, couponCode, existingOrderId }) => {
   if (!Array.isArray(items) || items.length === 0) throw new Error("no_items");
 
-  let cust;
+  let cust = null;
+  let offlineCust = null;
+  let customerDetails = {
+    name: String(customerData.name).trim(),
+    phone: String(customerData.phone).trim(),
+    email: String(customerData.email || "").trim(),
+    whatsappNumber: String(customerData.whatsappNumber || "").trim(),
+    address: String(customerData.address || "").trim()
+  };
+
   if (customerData.id) {
-    cust = await Customer.findOne({ _id: customerData.id, isActive: true });
+    if (customerData.isOffline) {
+      offlineCust = await OfflineCustomer.findById(customerData.id);
+    } else {
+      cust = await Customer.findOne({ _id: customerData.id, isActive: true });
+    }
+  } else if (customerData.offlineCustomerId) {
+    offlineCust = await OfflineCustomer.findById(customerData.offlineCustomerId);
+    if (offlineCust) {
+      customerDetails = {
+        name: offlineCust.name,
+        phone: offlineCust.phone,
+        email: offlineCust.email,
+        whatsappNumber: offlineCust.whatsappNumber,
+        address: offlineCust.address
+      };
+    }
   } else {
-    const phone = String(customerData.phone).trim();
+    // Try to find existing customer (online or offline)
+    const phone = customerDetails.phone;
     cust = await Customer.findOne({ phone });
     if (!cust) {
-      cust = await Customer.create({
-        name: String(customerData.name).trim(),
-        phone,
-        email: customerData.email || undefined,
-        address: customerData.address || "",
-        isVerified: false // Admin created customers are not verified by default
-      });
+      offlineCust = await OfflineCustomer.findOne({ phone });
     }
+    // If no existing, don't auto-create unless needed
   }
-  if (!cust) throw new Error("customer_not_found");
 
   const ids = items.map((x) => x.productId || x.product);
   const products = await Product.find({ _id: { $in: ids }, isActive: true });
@@ -119,7 +139,9 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
         [
           {
             invoiceNumber,
-            customer: cust._id,
+            customer: cust?._id,
+            offlineCustomer: offlineCust?._id,
+            customerDetails,
             items: billItems,
             subtotal: totals.subtotal,
             gstTotal: totals.gstTotal,
@@ -135,7 +157,25 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
       );
       billDoc = bills[0];
 
-      await Customer.updateOne({ _id: cust._id }, { $push: { purchaseHistory: billDoc._id } }, { session });
+      if (cust) {
+        await Customer.updateOne(
+          { _id: cust._id },
+          { 
+            $push: { purchaseHistory: billDoc._id },
+            $inc: { totalSpent: billDoc.payable, totalOrders: 1 }
+          },
+          { session }
+        );
+      }
+      if (offlineCust) {
+        await OfflineCustomer.updateOne(
+          { _id: offlineCust._id },
+          { 
+            $inc: { totalSpent: billDoc.payable, totalOrders: 1 }
+          },
+          { session }
+        );
+      }
 
       if (existingOrderId) {
         await Order.findByIdAndUpdate(existingOrderId, { 
@@ -147,7 +187,11 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
         await Order.create([{
           type: "BILL",
           billId: billDoc._id,
-          customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
+          customer: { 
+            name: customerDetails.name, 
+            phone: customerDetails.phone, 
+            email: customerDetails.email || "" 
+          },
           items: billItems,
           totalEstimate: billDoc.payable,
           status: "FULFILLED",
