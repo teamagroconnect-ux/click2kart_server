@@ -7,6 +7,7 @@ import StockTxn from "../models/StockTxn.js";
 import Coupon from "../models/Coupon.js";
 import { computeTotals, generateInvoiceNumber } from "./invoice.js";
 import { sendLowStockEmail } from "./notifications.js";
+import { bumpCacheVersion } from "./redis.js";
 
 const lowStockAlertCache = new Set(); // Track product IDs that recently triggered an alert
 
@@ -161,6 +162,10 @@ export const createBillFromData = async ({ customerData, items, paymentType, cou
   } finally {
     session.endSession();
   }
+  
+  // Invalidate product cache
+  await bumpCacheVersion("products:grouped");
+  await bumpCacheVersion("products:list");
 
   // Stock notification
   try {

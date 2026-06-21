@@ -17,13 +17,14 @@ router.get("/me", auth, async (req, res) => {
     });
   }
 
-  const user = await Customer.findById(req.user.id).select("name email phone address isKycComplete kyc dob");
+  const user = await Customer.findById(req.user.id).select("name email phone whatsappNumber address isKycComplete kyc dob");
   if (!user) return res.status(404).json({ error: "not_found" });
   res.json({
     id: user._id.toString(),
     name: user.name,
     email: user.email || "",
     phone: user.phone,
+    whatsappNumber: user.whatsappNumber || "",
     defaultAddress: user.address || "",
     isKycComplete: !!user.isKycComplete,
     kyc: user.kyc || {},
@@ -62,7 +63,7 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
 });
 
 router.put("/profile", auth, requireRole("customer"), async (req, res) => {
-  const { address, name, phone, dob } = req.body;
+  const { address, name, phone, dob, whatsappNumber } = req.body;
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
@@ -70,6 +71,7 @@ router.put("/profile", auth, requireRole("customer"), async (req, res) => {
   if (typeof name === "string") user.name = name.trim();
   if (typeof phone === "string") user.phone = phone.trim();
   if (dob) user.dob = new Date(dob);
+  if (typeof whatsappNumber === "string") user.whatsappNumber = whatsappNumber.trim();
 
   await user.save();
   res.json({ success: true });

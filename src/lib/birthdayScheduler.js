@@ -2,17 +2,31 @@
 import cron from "node-cron";
 import Customer from "../models/Customer.js";
 import Partner from "../models/Partner.js";
+import Settings from "../models/Settings.js";
 import { sendEmail } from "./mailer.js";
 
 const sendBirthdayWish = async (user, userType) => {
-  const company = process.env.COMPANY_NAME || "Click2Kart";
+  const settings = await Settings.getDefaultSettings();
+  const company = settings.companyName || "Click2Kart";
   const subject = `🎉 Happy Birthday ${user.name}! - ${company}`;
+
+  // Get profile picture - check both possible locations
+  const profilePicture = user.kyc?.profilePicture || user.profilePicture || "";
 
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;max-width:600px;margin:20px auto;padding:40px;border:1px solid #f1f5f9;border-radius:24px;background:#ffffff;box-shadow:0 20px 40px rgba(0,0,0,0.03);text-align:center;">
       <div style="text-align:center;margin-bottom:32px">
         <div style="font-size:12px;letter-spacing:.3em;color:#7c3aed;background:#f5f3ff;border:1px solid #e9d5ff;display:inline-block;padding:8px 20px;border-radius:100px;font-weight:900;text-transform:uppercase;margin-bottom:24px;">${company}</div>
-        <div style="font-size:64px;margin-bottom:16px;">🎂</div>
+        
+        <!-- Profile Picture in Round Circle -->
+        ${profilePicture ? `
+          <div style="margin-bottom:20px;">
+            <img src="${profilePicture}" alt="${user.name}" style="width:120px;height:120px;border-radius:50%;object-fit:cover;border:4px solid #f5f3ff;box-shadow:0 8px 24px rgba(124,58,237,0.15);" />
+          </div>
+        ` : `
+          <div style="font-size:64px;margin-bottom:16px;">🎂</div>
+        `}
+        
         <h1 style="margin:0 0 12px;font-size:36px;line-height:1.1;color:#0f172a;font-weight:900;letter-spacing:-0.02em">Happy Birthday, ${user.name}!</h1>
         <p style="margin:0 0 32px;font-size:16px;color:#64748b;line-height:1.7;font-weight:500">
           We hope your special day is filled with joy, laughter, and wonderful memories! 🎉
@@ -25,7 +39,7 @@ const sendBirthdayWish = async (user, userType) => {
       </div>
 
       <div style="margin-top:40px;padding:24px;background:#f8fafc;border-radius:16px;color:#64748b;font-size:13px;line-height:1.6;text-align:center;border:1px solid #f1f5f9">
-        This is a premium automated birthday wish from <strong>${company}</strong>.<br/>If you have any questions, our support team is here to help.<br/><br/>Mail us at: <a href="mailto:support@click2kart.net" style="color:#7c3aed;font-weight:700;text-decoration:none">support@click2kart.net</a>
+        This is a premium automated birthday wish from <strong>${company}</strong>.<br/>If you have any questions, our support team is here to help.<br/><br/>Mail us at: <a href="mailto:${settings.supportEmail || 'support@click2kart.net'}" style="color:#7c3aed;font-weight:700;text-decoration:none">${settings.supportEmail || 'support@click2kart.net'}</a>
       </div>
       <div style="margin-top:32px;text-align:center;font-size:12px;color:#cbd5e1;font-weight:600;letter-spacing:0.05em">
         © ${new Date().getFullYear()} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
@@ -45,6 +59,14 @@ const sendBirthdayWish = async (user, userType) => {
 
 const checkAndSendBirthdayWishes = async () => {
   try {
+    const settings = await Settings.getDefaultSettings();
+    
+    // Check if birthday wishes are enabled
+    if (!settings.enableBirthdayWishes) {
+      console.log("Birthday wishes are disabled in settings");
+      return;
+    }
+    
     const today = new Date();
     const day = today.getDate();
     const month = today.getMonth(); // 0-11

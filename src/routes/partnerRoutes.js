@@ -138,11 +138,12 @@ router.put("/profile", auth, requireRole("partner"), async (req, res) => {
   const partner = await Partner.findById(req.user.id);
   if (!partner) return res.status(404).json({ error: "not_found" });
 
-  const { name, phone, bloodGroup, address, city, district, state, pincode, bankAccount, profilePicture, dob, panCard, aadhaarCard } = req.body || {};
+  const { name, phone, whatsappNumber, bloodGroup, address, city, district, state, pincode, bankAccount, profilePicture, dob, panCard, aadhaarCard } = req.body || {};
   const update = {};
 
   if (name != null) update.name = String(name).trim();
   if (phone != null) update.phone = String(phone).trim();
+  if (whatsappNumber != null) update.whatsappNumber = String(whatsappNumber).trim();
   if (bloodGroup != null) update.bloodGroup = String(bloodGroup).trim().toUpperCase();
   if (address != null) update.address = String(address).trim();
   if (city != null) update.city = String(city).trim();

@@ -6,6 +6,7 @@ import Bill from "../models/Bill.js";
 import { sendEmail } from "../lib/mailer.js";
 
 import Admin from "../models/Admin.js";
+import Settings from "../models/Settings.js";
 
 const router = express.Router();
 
@@ -93,7 +94,8 @@ router.delete("/staff/:id", auth, requireRole("admin"), async (req, res) => {
 
 router.get("/stats", auth, async (req, res) => {
   const Order = (await import("../models/Order.js")).default;
-  const threshold = Number(process.env.LOW_STOCK_THRESHOLD ?? 5);
+  const settings = await Settings.getDefaultSettings();
+  const threshold = settings.lowStockThreshold || 5;
   
   // Aggregate inventory stats directly in DB for efficiency
   const invStats = await Product.aggregate([
@@ -190,29 +192,82 @@ router.get("/stats", auth, async (req, res) => {
   });
 });
 
-router.get("/settings", auth, requireRole("admin"), (req, res) => {
-  res.json({
-    companyName: process.env.COMPANY_NAME || "Click2Kart",
-    companyGst: process.env.COMPANY_GST || "",
-    companyAddress: process.env.COMPANY_ADDRESS || "",
-    companyPhone: process.env.COMPANY_PHONE || "",
-    companyEmail: process.env.COMPANY_EMAIL || "",
-    lowStockThreshold: Number(process.env.LOW_STOCK_THRESHOLD ?? 5)
-  });
+// Get settings from database
+router.get("/settings", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const settings = await Settings.getDefaultSettings();
+    res.json(settings);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load settings" });
+  }
 });
 
-// Update admin deletion password
+// Update settings
+router.put("/settings", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const settings = await Settings.getDefaultSettings();
+    
+    // Update all provided fields
+    Object.keys(req.body).forEach(key => {
+      if (key in settings.schema.paths) {
+        settings[key] = req.body[key];
+      }
+    });
+    
+    await settings.save();
+    res.json(settings);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to update settings" });
+  }
+});
+
+// Update admin deletion password (requires old password)
 router.put("/deletion-password", auth, requireRole("admin"), async (req, res) => {
   try {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "Old password and new password (min 6 chars) required" });
     }
 
     const admin = await Admin.findById(req.user.id);
     if (!admin) return res.status(404).json({ error: "Admin not found" });
 
+    // Verify old password
+    const isMatch = await admin.compareDeletionPassword(oldPassword);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid old password" });
+    }
+
     admin.deletionPassword = newPassword;
+    await admin.save();
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Change admin login password (requires old password)
+router.put("/change-password", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "Old password and new password (min 6 chars) required" });
+    }
+
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) return res.status(404).json({ error: "Admin not found" });
+
+    // Verify old password
+    const isMatch = await admin.comparePassword(oldPassword);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid old password" });
+    }
+
+    admin.password = newPassword;
     await admin.save();
 
     res.json({ success: true });

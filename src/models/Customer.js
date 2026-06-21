@@ -5,6 +5,7 @@ const customerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     phone: { type: String, required: true, trim: true, unique: true },
+    whatsappNumber: { type: String, default: '', trim: true },
     email: { type: String, unique: true, lowercase: true, trim: true, sparse: true },
     password: { type: String, minlength: 6 },
     address: { type: String, default: "" },

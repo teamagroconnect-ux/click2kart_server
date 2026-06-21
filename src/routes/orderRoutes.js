@@ -14,6 +14,7 @@ import AuditLog from "../models/AuditLog.js";
 import { notifyAdmin } from "../lib/socket.js";
 import fetch from "node-fetch";
 import axios from "axios";
+import Settings from "../models/Settings.js";
 
 const router = express.Router();
 
@@ -233,7 +234,8 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   }
 
   const totals = computeTotals(products, items);
-  const minAmount = Number(process.env.MIN_ORDER_AMOUNT || 5000);
+  const settings = await Settings.getDefaultSettings();
+  const minAmount = Number(settings.minimumOrderAmount || 5000);
   if (totals.total < minAmount) {
     return res.status(400).json({ error: "min_order_not_met", minAmount });
   }
@@ -374,7 +376,8 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
     const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
     if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
-    const minAmount = Number(process.env.MIN_ORDER_AMOUNT || 5000);
+    const settings = await Settings.getDefaultSettings();
+    const minAmount = Number(settings.minimumOrderAmount || 5000);
     if (totals.total < minAmount) return res.status(400).json({ error: "min_order_not_met", minAmount });
 
     const { finalAmount: payableTotal } = await validateAndApplyCoupon(couponCode, totals.total);
