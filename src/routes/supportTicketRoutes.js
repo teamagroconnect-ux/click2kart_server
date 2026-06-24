@@ -1,18 +1,20 @@
 import express from "express";
 import { auth, requireRole } from "../middleware/auth.js";
 import SupportTicket from "../models/SupportTicket.js";
+import Order from "../models/Order.js";
 
 const router = express.Router();
 
 // User: Create a ticket
 router.post("/", auth, requireRole("customer"), async (req, res) => {
   try {
-    const { subject, description, category } = req.body;
+    const { subject, description, category, relatedOrder } = req.body;
     const ticket = await SupportTicket.create({
       user: req.user.id,
       subject,
       description,
       category,
+      relatedOrder,
       messages: [{ sender: 'user', message: description }]
     });
     res.status(201).json(ticket);
@@ -24,8 +26,27 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 // User: Get my tickets
 router.get("/my-tickets", auth, requireRole("customer"), async (req, res) => {
   try {
-    const tickets = await SupportTicket.find({ user: req.user.id }).sort({ updatedAt: -1 });
+    const tickets = await SupportTicket.find({ user: req.user.id })
+      .populate('relatedOrder', 'orderId total status')
+      .sort({ updatedAt: -1 });
     res.json(tickets);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Admin: Get context for a ticket (user details + recent orders)
+router.get("/admin/ticket/:id/context", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findById(req.params.id);
+    if (!ticket) return res.status(404).json({ error: "Ticket not found" });
+
+    const recentOrders = await Order.find({ user: ticket.user })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('orderId total status createdAt');
+
+    res.json({ recentOrders });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

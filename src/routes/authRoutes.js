@@ -149,7 +149,14 @@ router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req,
 
   res.json({
     token,
-    user: { id: user._id.toString(), name: user.name, email: user.email, role: "customer", isKycComplete: !!user.isKycComplete }
+    user: { 
+      id: user._id.toString(), 
+      name: user.name, 
+      email: user.email, 
+      role: "customer", 
+      isKycComplete: !!user.isKycComplete,
+      kyc: user.kyc || {}
+    }
   });
 });
 
@@ -238,7 +245,14 @@ router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 60
   );
   res.json({
     token,
-    user: { id: user._id.toString(), name: user.name, email: user.email, role: "customer", isKycComplete: !!user.isKycComplete }
+    user: { 
+      id: user._id.toString(), 
+      name: user.name, 
+      email: user.email, 
+      role: "customer", 
+      isKycComplete: !!user.isKycComplete,
+      kyc: user.kyc || {}
+    }
   });
 });
 

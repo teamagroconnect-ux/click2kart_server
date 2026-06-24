@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 
 const supportTicketSchema = new mongoose.Schema({
+  ticketId: {
+    type: String,
+    unique: true
+  },
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Customer',
@@ -20,9 +24,13 @@ const supportTicketSchema = new mongoose.Schema({
     enum: ['Order', 'Product', 'Payment', 'Return/Refund', 'Other'],
     default: 'Other'
   },
+  relatedOrder: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order'
+  },
   status: {
     type: String,
-    enum: ['Open', 'In-Progress', 'Resolved', 'Closed'],
+    enum: ['Open', 'In Progress', 'Resolved', 'Closed'],
     default: 'Open'
   },
   priority: {
@@ -47,6 +55,15 @@ const supportTicketSchema = new mongoose.Schema({
   }]
 }, {
   timestamps: true
+});
+
+// Generate Ticket ID before saving
+supportTicketSchema.pre('save', async function(next) {
+  if (!this.ticketId) {
+    const count = await mongoose.model('SupportTicket').countDocuments();
+    this.ticketId = `TK${String(count + 1).padStart(5, '0')}`;
+  }
+  next();
 });
 
 const SupportTicket = mongoose.model('SupportTicket', supportTicketSchema);
