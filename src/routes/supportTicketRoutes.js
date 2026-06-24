@@ -169,13 +169,29 @@ router.post("/:id/request-image", auth, requireRole("admin"), async (req, res) =
 // User/Admin: Upload image to ticket
 router.post("/:id/upload-image", auth, async (req, res) => {
   try {
-    const { imageUrl, message } = req.body;
+    const { imageUrl, message, requestId } = req.body;
     const sender = req.user.role === 'admin' ? 'admin' : 'user';
     const ticket = await SupportTicket.findById(req.params.id);
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     if (req.user.role !== 'admin' && ticket.user.toString() !== req.user.id) {
       return res.status(403).json({ error: "Unauthorized" });
+    }
+
+    // If it's a user uploading, check if it's in response to a request
+    if (sender === 'user') {
+      if (!requestId) return res.status(400).json({ error: "Upload is only allowed on request." });
+      
+      const requestMsg = ticket.messages.id(requestId);
+      if (!requestMsg || requestMsg.type !== 'image_request') {
+        return res.status(400).json({ error: "Invalid image request." });
+      }
+      
+      if (requestMsg.isFulfilled) {
+        return res.status(400).json({ error: "This request has already been fulfilled." });
+      }
+      
+      requestMsg.isFulfilled = true;
     }
 
     ticket.messages.push({ 

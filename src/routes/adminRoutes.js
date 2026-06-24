@@ -131,10 +131,11 @@ router.get("/stats", auth, async (req, res) => {
     }
   ]);
 
-  const [actualProductsCount, totalCustomers, pendingCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
+  const [actualProductsCount, totalCustomers, pendingCustomers, skippedCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
     Product.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: true }),
-    Customer.countDocuments({ isActive: false }),
+    Customer.countDocuments({ approvalStatus: 'pending' }),
+    Customer.countDocuments({ approvalStatus: 'skipped' }),
     Bill.countDocuments({}),
     Product.find({ 
       isActive: true, 
@@ -186,7 +187,8 @@ router.get("/stats", auth, async (req, res) => {
     outOfStock: inv.outOfStock,
     lowStockCount: inv.lowStockCount,
     totalCustomers, 
-    pendingCustomers, 
+    pendingCustomers,
+    skippedCustomers,
     totalBills, 
     lowStock: lowStock.sort((a, b) => a.stock - b.stock).slice(0, 10), 
     newOrders, 
@@ -280,7 +282,7 @@ router.put("/change-password", auth, requireRole("admin"), async (req, res) => {
 });
 
 router.get("/customers", auth, requirePermission("customers"), async (req, res) => {
-  const { q } = req.query;
+  const { q, status } = req.query;
   const filter = {};
   if (q) {
     filter.$or = [
@@ -288,8 +290,22 @@ router.get("/customers", auth, requirePermission("customers"), async (req, res) 
       { phone: { $regex: String(q), $options: "i" } }
     ];
   }
-  const items = await Customer.find(filter).sort({ createdAt: -1 });
-  res.json(items);
+  if (status) {
+    if (status === 'pending') filter.approvalStatus = 'pending';
+    else if (status === 'skipped') filter.approvalStatus = 'skipped';
+    else if (status === 'approved') filter.approvalStatus = 'approved';
+  }
+  
+  const customers = await Customer.find(filter).sort({ createdAt: -1 });
+  
+  // Enrich with order counts
+  const Order = (await import("../models/Order.js")).default;
+  const enriched = await Promise.all(customers.map(async (c) => {
+    const orderCount = await Order.countDocuments({ "customer.phone": c.phone });
+    return { ...c.toObject(), orderCount };
+  }));
+
+  res.json(enriched);
 });
 
 router.get("/customers/:id", auth, requirePermission("customers"), async (req, res) => {
@@ -325,7 +341,7 @@ router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => 
 
 router.post("/customers/:id/approve", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
-  const updated = await Customer.findByIdAndUpdate(id, { isActive: true }, { new: true });
+  const updated = await Customer.findByIdAndUpdate(id, { isActive: true, approvalStatus: 'approved' }, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   if (updated.email) {
     try {
@@ -348,6 +364,13 @@ router.post("/customers/:id/approve", auth, requirePermission("customers"), asyn
     } catch {}
   }
   res.json({ approved: true, customer: updated });
+});
+
+router.post("/customers/:id/skip", auth, requirePermission("customers"), async (req, res) => {
+  const id = req.params.id;
+  const updated = await Customer.findByIdAndUpdate(id, { approvalStatus: 'skipped' }, { new: true });
+  if (!updated) return res.status(404).json({ error: "not_found" });
+  res.json({ skipped: true, customer: updated });
 });
 
 // Top buyers analytics

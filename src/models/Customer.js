@@ -12,6 +12,7 @@ const customerSchema = new mongoose.Schema(
     purchaseHistory: [{ type: mongoose.Schema.Types.ObjectId, ref: "Bill" }],
     isVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    approvalStatus: { type: String, enum: ['pending', 'approved', 'skipped'], default: 'pending' },
     dob: { type: Date },
     kyc: {
       businessName: { type: String, default: "" },

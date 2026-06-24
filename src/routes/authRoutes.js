@@ -95,6 +95,7 @@ router.post("/customer/verify-otp", async (req, res) => {
     password,
     isVerified: true,
     isActive: false,
+    approvalStatus: 'pending',
     kyc: { partnerInviteCode: inviteCode || "" }
   });
 

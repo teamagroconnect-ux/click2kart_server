@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import Counter from "./Counter.js";
 
 const supportTicketSchema = new mongoose.Schema({
   ticketId: {
@@ -58,6 +59,10 @@ const supportTicketSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     },
+    isFulfilled: {
+      type: Boolean,
+      default: false
+    },
     createdAt: {
       type: Date,
       default: Date.now
@@ -70,8 +75,13 @@ const supportTicketSchema = new mongoose.Schema({
 // Generate Ticket ID before saving
 supportTicketSchema.pre('save', async function(next) {
   if (!this.ticketId) {
-    const count = await mongoose.model('SupportTicket').countDocuments();
-    this.ticketId = `TK${String(count + 1).padStart(5, '0')}`;
+    const key = 'support_ticket_id';
+    const doc = await Counter.findOneAndUpdate(
+      { key },
+      { $inc: { value: 1 } },
+      { upsert: true, new: true }
+    );
+    this.ticketId = `TK${String(doc.value).padStart(5, '0')}`;
   }
   next();
 });
