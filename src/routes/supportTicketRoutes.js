@@ -38,7 +38,7 @@ router.get("/my-tickets", auth, requireRole("customer"), async (req, res) => {
 // Admin: Get context for a ticket (user details + recent orders)
 router.get("/admin/ticket/:id/context", auth, requireRole("admin"), async (req, res) => {
   try {
-    const ticket = await SupportTicket.findById(req.params.id);
+    const ticket = await SupportTicket.findById(req.params.id).populate('user', 'name email phone kyc');
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
     const recentOrders = await Order.find({ user: ticket.user })
@@ -46,7 +46,7 @@ router.get("/admin/ticket/:id/context", auth, requireRole("admin"), async (req, 
       .limit(5)
       .select('orderId total status createdAt');
 
-    res.json({ recentOrders });
+    res.json({ user: ticket.user, recentOrders });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
