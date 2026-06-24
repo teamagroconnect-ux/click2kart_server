@@ -33,6 +33,7 @@ import paymentRoutes from "./routes/paymentRoutes.js";
 import offerRoutes from "./routes/offerRoutes.js";
 import brandRoutes from "./routes/brandRoutes.js";
 import subCategoryRoutes from "./routes/subCategoryRoutes.js";
+import supportTicketRoutes from "./routes/supportTicketRoutes.js";
 
 dotenv.config();
 
@@ -72,6 +73,7 @@ app.use("/api/payment", paymentRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/brands", brandRoutes);
 app.use("/api/subcategories", subCategoryRoutes);
+app.use("/api/support-tickets", supportTicketRoutes);
 
 const PORT = process.env.PORT || 5000;
 
