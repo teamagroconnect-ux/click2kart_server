@@ -86,7 +86,9 @@ export const renderMail = ({ heading, subheading, blocks, highlight, items, tota
   return `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;max-width:600px;margin:20px auto;padding:40px;border:1px solid #f1f5f9;border-radius:24px;background:#ffffff;box-shadow:0 20px 40px rgba(0,0,0,0.03)">
       <div style="text-align:center;margin-bottom:32px">
-        <img src="${logoUrl}" alt="${company}" style="height:80px;width:auto;object-fit:contain;margin-bottom:20px" />
+        <a href="${(process.env.CLIENT_URL || "https://click2kart.net")}" style="text-decoration:none">
+          <img src="${logoUrl}" alt="${company}" style="height:60px;width:auto;object-fit:contain;margin-bottom:20px" />
+        </a>
         <div style="font-size:12px;letter-spacing:.3em;color:#7c3aed;background:#f5f3ff;border:1px solid #e9d5ff;display:inline-block;padding:8px 20px;border-radius:100px;font-weight:900;text-transform:uppercase">${company}</div>
       </div>
       <h1 style="margin:0 0 12px;font-size:28px;line-height:1.1;color:#0f172a;font-weight:900;text-align:center;letter-spacing:-0.02em">${heading || ""}</h1>
@@ -131,7 +133,9 @@ export const sendOTP = async (email, otp, purpose = "ACCOUNT_VERIFICATION") => {
 
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; max-width:500px; margin:20px auto; padding:40px; border:1px solid #f1f5f9; border-radius:24px; background:#ffffff; box-shadow:0 20px 40px rgba(0,0,0,0.03); text-align:center;">
-      <img src="${logoUrl}" alt="${company}" style="height:70px;width:auto;object-fit:contain;margin-bottom:24px" />
+      <a href="${(process.env.CLIENT_URL || "https://click2kart.net")}" style="text-decoration:none">
+        <img src="${logoUrl}" alt="${company}" style="height:60px;width:auto;object-fit:contain;margin-bottom:24px" />
+      </a>
       <div style="font-size:12px; letter-spacing:.3em; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; display:inline-block; padding:8px 20px; border-radius:100px; font-weight:900; text-transform:uppercase; margin-bottom:32px;">${company}</div>
       <h2 style="color:#0f172a; margin:0 0 12px; font-weight:900; font-size:24px; letter-spacing:-0.02em;">${title}</h2>
       <p style="color:#64748b; line-height:1.6; font-size:15px; margin-bottom:32px; font-weight:500;">${intro}</p>
@@ -160,7 +164,9 @@ export const sendPartnerWelcome = async (partner) => {
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; max-width:560px; margin:20px auto; padding:40px; border:1px solid #f1f5f9; border-radius:24px; background:#ffffff; box-shadow:0 20px 40px rgba(0,0,0,0.03);">
       <div style="text-align:center; margin-bottom:32px;">
-        <img src="${logoUrl}" alt="${company}" style="height:75px;width:auto;object-fit:contain;margin-bottom:20px" />
+        <a href="${baseUrl}" style="text-decoration:none">
+          <img src="${logoUrl}" alt="${company}" style="height:60px;width:auto;object-fit:contain;margin-bottom:20px" />
+        </a>
         <div style="font-size:12px; letter-spacing:.3em; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; display:inline-block; padding:8px 20px; border-radius:100px; font-weight:900; text-transform:uppercase; margin-bottom:24px;">${company} PARTNER</div>
         <h1 style="margin:0 0 12px; font-size:32px; color:#0f172a; font-weight:900; letter-spacing:-0.02em;">Welcome Aboard, ${partner.name || 'Partner'}!</h1>
         <p style="color:#64748b; line-height:1.7; font-size:15px; margin:0;">
@@ -224,7 +230,9 @@ export const sendPartnerCoupon = async (partner, coupon) => {
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; max-width:560px; margin:20px auto; padding:40px; border:1px solid #f1f5f9; border-radius:24px; background:#ffffff; box-shadow:0 20px 40px rgba(0,0,0,0.03);">
       <div style="text-align:center; margin-bottom:32px;">
-        <img src="${logoUrl}" alt="${company}" style="height:75px;width:auto;object-fit:contain;margin-bottom:20px" />
+        <a href="${(process.env.CLIENT_URL || "https://click2kart.net")}" style="text-decoration:none">
+          <img src="${logoUrl}" alt="${company}" style="height:60px;width:auto;object-fit:contain;margin-bottom:20px" />
+        </a>
         <div style="font-size:12px; letter-spacing:.3em; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; display:inline-block; padding:8px 20px; border-radius:100px; font-weight:900; text-transform:uppercase; margin-bottom:24px;">${company} PARTNER</div>
         <h1 style="margin:0 0 12px; font-size:32px; color:#0f172a; font-weight:900; letter-spacing:-0.02em;">New Coupon Code!</h1>
         <p style="color:#64748b; line-height:1.7; font-size:15px; margin:0;">
