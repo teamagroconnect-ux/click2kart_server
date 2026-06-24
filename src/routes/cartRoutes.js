@@ -90,22 +90,35 @@ router.post("/add", async (req, res) => {
     return res.status(400).json({ error: "invalid_payload" });
   }
 
+  console.log('Validation passed! Now checking product...')
+  
   const product = await Product.findOne({ _id: productId, isActive: true });
+  console.log('Found product:', product ? product._id : 'NOT FOUND')
+  
   if (!product) return res.status(404).json({ error: "product_not_found" });
 
   let variant = null;
   let storedVariantKey = variantSku ? String(variantSku) : undefined;
   if (variantSku) {
+    console.log('Looking for variant with sku:', variantSku)
     variant = findVariant(product, variantSku);
-    if (!variant || variant.isActive === false) return res.status(404).json({ error: "variant_not_found" });
+    if (!variant || variant.isActive === false) {
+      console.log('Variant not found or inactive')
+      return res.status(404).json({ error: "variant_not_found" });
+    }
     storedVariantKey = variant.sku ? String(variant.sku) : String(variant._id);
+    console.log('Found variant:', storedVariantKey)
   }
 
   const effQty = normalizeQty(qty, product);
+  console.log('effQty:', effQty)
 
   let cart = await Cart.findOne({ customer: req.user.id });
+  console.log('Found cart for user:', req.user.id, cart ? cart._id : 'NO CART')
   if (!cart) {
+    console.log('Creating new cart...')
     cart = await Cart.create({ customer: req.user.id, items: [] });
+    console.log('Created cart:', cart._id)
   }
 
   const existing = cart.items.find(
@@ -113,17 +126,32 @@ router.post("/add", async (req, res) => {
   );
   const currentQty = existing ? existing.quantity : 0;
   const available = variant ? (variant.stock || 0) : product.stock;
+
   const nextQty = setAbsolute ? effQty : currentQty + effQty;
-  if (nextQty > available) return res.status(400).json({ error: "insufficient_stock" });
+  console.log('currentQty:', currentQty, 'available:', available, 'nextQty:', nextQty)
+
+  if (nextQty > available) {
+    console.log('Insufficient stock!')
+    return res.status(400).json({ error: "insufficient_stock" });
+  }
+
+  console.log('All checks passed! Updating cart...')
 
   if (existing) {
     existing.quantity = nextQty;
+    console.log('Updated existing item, new quantity:', existing.quantity)
   } else {
     cart.items.push({ product: product._id, variantSku: storedVariantKey || undefined, quantity: nextQty });
+    console.log('Added new item to cart')
   }
+
+  console.log('Cart items now:', cart.items)
+  
   await cart.save();
+  console.log('Cart saved!')
 
   const payload = await serializeCart(cart);
+  console.log('Sending response payload:', payload)
   res.json(payload);
 });
 
