@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from "mongoose";
 
 const offlineCustomerSchema = new mongoose.Schema({
   name: {
@@ -46,4 +46,4 @@ const offlineCustomerSchema = new mongoose.Schema({
 
 const OfflineCustomer = mongoose.model('OfflineCustomer', offlineCustomerSchema);
 
-module.exports = OfflineCustomer;
+export default OfflineCustomer;
