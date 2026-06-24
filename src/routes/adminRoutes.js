@@ -450,9 +450,9 @@ router.get("/offline-customers", auth, requirePermission("offline-customers"), a
   const filter = {};
   if (q) {
     filter.$or = [
-      { name: { $regex: String(q), $options: "i" },
-      { phone: { $regex: String(q), $options: "i" },
-      { email: { $regex: String(q), $options: "i" }
+      { name: { $regex: String(q), $options: "i" } },
+      { phone: { $regex: String(q), $options: "i" } },
+      { email: { $regex: String(q), $options: "i" } }
     ];
   }
   const items = await OfflineCustomer.find(filter).sort({ createdAt: -1 });
