@@ -48,6 +48,16 @@ const supportTicketSchema = new mongoose.Schema({
       type: String,
       required: true
     },
+    type: {
+      type: String,
+      enum: ['text', 'image_request', 'image'],
+      default: 'text'
+    },
+    attachments: [String],
+    isEdited: {
+      type: Boolean,
+      default: false
+    },
     createdAt: {
       type: Date,
       default: Date.now
