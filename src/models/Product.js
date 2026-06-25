@@ -76,7 +76,15 @@ const productSchema = new mongoose.Schema(
     isVerified: { type: Boolean, default: true },
     ratingAvg: { type: Number, default: 0, min: 0, max: 5 },
     ratingCount: { type: Number, default: 0, min: 0 },
-    priceTrend: { type: Number, enum: [0, 1], default: 0 } // 0 = down, 1 = up
+    priceTrend: { type: Number, enum: [0, 1], default: 0 }, // 0 = down, 1 = up
+    partnerBenefit: {
+      type: { type: String, enum: ["PERCENT", "FLAT"], default: "PERCENT" },
+      value: { type: Number, default: 0, min: 0 }
+    },
+    userDiscount: {
+      type: { type: String, enum: ["PERCENT", "FLAT"], default: "PERCENT" },
+      value: { type: Number, default: 0, min: 0 }
+    }
   },
   { timestamps: true }
 );
