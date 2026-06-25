@@ -1,5 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
+import jwt from "jsonwebtoken";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
@@ -15,6 +16,18 @@ import { notifyAdmin } from "../lib/socket.js";
 import fetch from "node-fetch";
 import axios from "axios";
 import Settings from "../models/Settings.js";
+
+const isAdmin = (req) => {
+  try {
+    const header = req.headers.authorization || "";
+    const [type, token] = header.split(" ");
+    if (type === "Bearer" && token) {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      return payload.role === "admin";
+    }
+  } catch {}
+  return false;
+};
 
 const router = express.Router();
 

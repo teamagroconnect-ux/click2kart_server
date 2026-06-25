@@ -32,6 +32,18 @@ const isViewerAuthorized = (req) => {
   return false;
 };
 
+const isAdmin = (req) => {
+  try {
+    const header = req.headers.authorization || "";
+    const [type, token] = header.split(" ");
+    if (type === "Bearer" && token) {
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      return payload.role === "admin";
+    }
+  } catch {}
+  return false;
+};
+
 const normalizeSpecifications = (arr) => {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -88,7 +100,11 @@ router.get("/grouped", async (req, res) => {
   const cacheKey = `products:grouped:v${version}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
 
   const formatted = await getOrSetCache(cacheKey, async () => {
-    const query = { isActive: true, isLive: true };
+    const isAdminUser = isAdmin(req);
+    const query = { isActive: true };
+    if (!isAdminUser) {
+      query.isLive = true;
+    }
     if (brand && mongoose.isValidObjectId(brand)) {
       query.brand = new mongoose.Types.ObjectId(brand);
     }
@@ -134,12 +150,13 @@ router.get("/", async (req, res) => {
   
   try {
     const updateResult = await Product.updateMany({ packSize: { $exists: false } }, { $set: { packSize: 1 } });
-    if (updateResult.modifiedCount > 0) {
+    const isLiveUpdateResult = await Product.updateMany({ isLive: { $exists: false } }, { $set: { isLive: true } });
+    if (updateResult.modifiedCount > 0 || isLiveUpdateResult.modifiedCount > 0) {
       await bumpCacheVersion("products:grouped");
       await bumpCacheVersion("products:list");
     }
   } catch(e) {
-    console.error("Failed to update packSize for existing products:", e);
+    console.error("Failed to update existing products:", e);
   }
   
   const { brand, category, subCategory, store, section, q, page: _page, limit: _limit } = req.query;
@@ -154,7 +171,11 @@ router.get("/", async (req, res) => {
   const cacheKey = `products:list:v${version}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
 
   const result = await getOrSetCache(cacheKey, async () => {
-    const query = { isActive: true, isLive: true };
+    const isAdminUser = isAdmin(req);
+    const query = { isActive: true };
+    if (!isAdminUser) {
+      query.isLive = true;
+    }
     if (brand && mongoose.isValidObjectId(brand)) query.brand = brand;
     if (category && mongoose.isValidObjectId(category)) query.category = category;
     if (subCategory && mongoose.isValidObjectId(subCategory)) query.subCategory = subCategory;
@@ -264,7 +285,9 @@ router.get("/:idOrSlug", async (req, res) => {
   await item.populate("category", "name");
   await item.populate("subCategory", "name");
   
-  if (!item.isActive || !item.isLive) return res.status(404).json({ error: "not_found" });
+  const isAdminUser = isAdmin(req);
+  if (!item.isActive) return res.status(404).json({ error: "not_found" });
+  if (!isAdminUser && !item.isLive) return res.status(404).json({ error: "not_found" });
   const canViewPrice = isViewerAuthorized(req);
   res.json(sanitizeProduct(item, canViewPrice));
 });
@@ -282,19 +305,25 @@ router.get("/:idOrSlug/recommendations", async (req, res) => {
     base = await Product.findOne({ slug: idOrSlug }).select({ category: 1, brand: 1, price: 1, _id: 1, isActive: 1 });
   }
   
-  if (!base || !base.isActive || !base.isLive) return res.status(404).json({ error: "not_found" });
+  const isAdminUser = isAdmin(req);
+  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  if (!isAdminUser && !base.isLive) return res.status(404).json({ error: "not_found" });
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 6));
   const priceRange = {
     $gte: Math.max(0, Number(base.price || 0) * 0.8),
     $lte: Number(base.price || 0) * 1.2
   };
-  const items = await Product.find({
-      isActive: true,
-      category: base.category,
-      ...(base.brand ? { brand: base.brand } : {}),
-      ...(base.price != null ? { price: priceRange } : {}),
-      _id: { $ne: base._id }
-    })
+  const itemsQuery = {
+    isActive: true,
+    category: base.category,
+    ...(base.brand ? { brand: base.brand } : {}),
+    ...(base.price != null ? { price: priceRange } : {}),
+    _id: { $ne: base._id }
+  };
+  if (!isAdminUser) {
+    itemsQuery.isLive = true;
+  }
+  const items = await Product.find(itemsQuery)
     .sort({ stock: -1, createdAt: -1 })
     .limit(limit);
   const canViewPrice = isViewerAuthorized(req);
@@ -306,7 +335,9 @@ router.get("/recommend", async (req, res) => {
   const id = String(req.query.productId || "").trim();
   if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "invalid_id" });
   const base = await Product.findById(id).select({ category: 1, brand: 1, price: 1, isActive: 1 });
-  if (!base || !base.isActive || !base.isLive) return res.status(404).json({ error: "not_found" });
+  const isAdminUser = isAdmin(req);
+  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  if (!isAdminUser && !base.isLive) return res.status(404).json({ error: "not_found" });
   const priceRange = {
     $gte: Math.max(0, Number(base.price || 0) * 0.8),
     $lte: Number(base.price || 0) * 1.2
@@ -324,12 +355,14 @@ router.get("/recommend", async (req, res) => {
   }
   const filter = {
     isActive: true,
-    isLive: true,
     category: base.category,
     ...(base.brand ? { brand: base.brand } : {}),
     ...(base.price != null ? { price: priceRange } : {}),
     _id: excludeIds.length ? { $ne: base._id, $nin: excludeIds } : { $ne: base._id }
   };
+  if (!isAdminUser) {
+    filter.isLive = true;
+  }
   const candidates = await Product.find(filter).sort({ stock: -1, createdAt: -1 }).limit(20).lean();
   const withMargin = candidates.map(c => {
     const margin = (c.margin != null) ? Number(c.margin) : ((c.mrp && c.mrp > c.price) ? (c.mrp - c.price) : 0);
@@ -797,7 +830,11 @@ router.get("/suggest", async (req, res) => {
   if (!connected) return res.json([]);
   const q = req.query.q ? String(req.query.q).trim() : "";
   if (!q) return res.json([]);
-  const base = { isActive: true, isLive: true };
+  const isAdminUser = isAdmin(req);
+  const base = { isActive: true };
+  if (!isAdminUser) {
+    base.isLive = true;
+  }
   let items = [];
   if (q.length >= 2) {
     items = await Product.find({ ...base, $text: { $search: q } })
