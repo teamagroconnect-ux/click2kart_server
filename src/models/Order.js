@@ -72,20 +72,14 @@ const orderSchema = new mongoose.Schema(
     ,
     shipping_discount: { type: Number, default: 0 },
     partnerCommission: {
-      type: {
-        couponId: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
-        amount: { type: Number, default: 0 },
-        status: { type: String, enum: ["PENDING", "SETTLED"], default: "PENDING" }
-      },
-      default: null
+      couponId: { type: mongoose.Schema.Types.ObjectId, ref: "Coupon" },
+      amount: { type: Number, default: 0 },
+      status: { type: String, enum: ["PENDING", "SETTLED"], default: "PENDING" }
     },
     userDiscount: {
-      type: {
-        type: { type: String, enum: ["PERCENT", "FLAT"], default: "PERCENT" },
-        value: { type: Number, default: 0 },
-        amount: { type: Number, default: 0 }
-      },
-      default: null
+      type: { type: String, enum: ["PERCENT", "FLAT"], default: "PERCENT" },
+      value: { type: Number, default: 0 },
+      amount: { type: Number, default: 0 }
     }
   },
   { timestamps: true }

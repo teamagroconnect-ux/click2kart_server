@@ -88,7 +88,7 @@ router.get("/grouped", async (req, res) => {
   const cacheKey = `products:grouped:v${version}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
 
   const formatted = await getOrSetCache(cacheKey, async () => {
-    const query = { isActive: true };
+    const query = { isActive: true, isLive: true };
     if (brand && mongoose.isValidObjectId(brand)) {
       query.brand = new mongoose.Types.ObjectId(brand);
     }
@@ -154,7 +154,7 @@ router.get("/", async (req, res) => {
   const cacheKey = `products:list:v${version}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
 
   const result = await getOrSetCache(cacheKey, async () => {
-    const query = { isActive: true };
+    const query = { isActive: true, isLive: true };
     if (brand && mongoose.isValidObjectId(brand)) query.brand = brand;
     if (category && mongoose.isValidObjectId(category)) query.category = category;
     if (subCategory && mongoose.isValidObjectId(subCategory)) query.subCategory = subCategory;
@@ -264,7 +264,7 @@ router.get("/:idOrSlug", async (req, res) => {
   await item.populate("category", "name");
   await item.populate("subCategory", "name");
   
-  if (!item.isActive) return res.status(404).json({ error: "not_found" });
+  if (!item.isActive || !item.isLive) return res.status(404).json({ error: "not_found" });
   const canViewPrice = isViewerAuthorized(req);
   res.json(sanitizeProduct(item, canViewPrice));
 });
@@ -282,7 +282,7 @@ router.get("/:idOrSlug/recommendations", async (req, res) => {
     base = await Product.findOne({ slug: idOrSlug }).select({ category: 1, brand: 1, price: 1, _id: 1, isActive: 1 });
   }
   
-  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  if (!base || !base.isActive || !base.isLive) return res.status(404).json({ error: "not_found" });
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 6));
   const priceRange = {
     $gte: Math.max(0, Number(base.price || 0) * 0.8),
@@ -306,7 +306,7 @@ router.get("/recommend", async (req, res) => {
   const id = String(req.query.productId || "").trim();
   if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "invalid_id" });
   const base = await Product.findById(id).select({ category: 1, brand: 1, price: 1, isActive: 1 });
-  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  if (!base || !base.isActive || !base.isLive) return res.status(404).json({ error: "not_found" });
   const priceRange = {
     $gte: Math.max(0, Number(base.price || 0) * 0.8),
     $lte: Number(base.price || 0) * 1.2
@@ -324,6 +324,7 @@ router.get("/recommend", async (req, res) => {
   }
   const filter = {
     isActive: true,
+    isLive: true,
     category: base.category,
     ...(base.brand ? { brand: base.brand } : {}),
     ...(base.price != null ? { price: priceRange } : {}),
@@ -405,9 +406,10 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
         images: Array.isArray(v?.images) ? v.images.map(i => (typeof i === "string" ? { url: i } : i)).filter(i => i && i.url) : []
       };
     }) : [],
-    partnerBenefit: partnerBenefit || { type: "PERCENT", value: 0 },
-    userDiscount: userDiscount || { type: "PERCENT", value: 0 },
-    isActive: false  // New products start as inactive, admin must activate manually
+    partnerBenefit: partnerBenefit || { discountType: "PERCENT", value: 0 },
+    userDiscount: userDiscount || { discountType: "PERCENT", value: 0 },
+    isActive: false,  // New products start as inactive, admin must activate manually
+    isLive: false
   });
   try {
     if ((doc.variants || []).length > 0) {
@@ -425,7 +427,7 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
 
 router.put("/:id", auth, requirePermission("products"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "volumetricWeight", "gst", "mrp", "isActive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku", "packSize", "partnerBenefit", "userDiscount"];
+  const allowed = ["name", "description", "highlights", "specifications", "price", "categoryId", "subCategoryId", "images", "stock", "weight", "volumetricWeight", "gst", "mrp", "isActive", "isLive", "bulkDiscountQuantity", "bulkDiscountPriceReduction", "bulkTiers", "variants", "brandId", "minOrderQty", "store", "section", "hsnCode", "sku", "packSize", "partnerBenefit", "userDiscount"];
   const payload = {};
   for (const k of allowed) if (k in req.body) payload[k] = req.body[k];
   if (payload.packSize !== undefined) payload.packSize = Number(payload.packSize || 1);
@@ -795,7 +797,7 @@ router.get("/suggest", async (req, res) => {
   if (!connected) return res.json([]);
   const q = req.query.q ? String(req.query.q).trim() : "";
   if (!q) return res.json([]);
-  const base = { isActive: true };
+  const base = { isActive: true, isLive: true };
   let items = [];
   if (q.length >= 2) {
     items = await Product.find({ ...base, $text: { $search: q } })

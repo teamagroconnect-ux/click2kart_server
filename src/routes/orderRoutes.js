@@ -175,7 +175,7 @@ const tryCreateDelhiveryShipment = async (order) => {
   }
 };
 
-const validateAndApplyCoupon = async (code, amount) => {
+const validateAndApplyCoupon = async (code, amount, products = []) => {
   if (!code) return { discount: 0, finalAmount: amount };
   const c = await Coupon.findOne({ code: code.toUpperCase(), isActive: true });
   if (!c) return { discount: 0, finalAmount: amount };
@@ -185,12 +185,25 @@ const validateAndApplyCoupon = async (code, amount) => {
   if (amount < (c.minAmount || 0)) return { discount: 0, finalAmount: amount };
 
   let discount = 0;
+  let commissionAmount = 0;
   if (c.type === "PERCENT") discount = (amount * c.value) / 100;
   else if (c.type === "FLAT") discount = c.value;
+  else if (c.type === "COMMISSION") {
+    // For commission type, discount is based on product-level user discounts
+    discount = products.reduce((total, p) => {
+      const productDiscount = p.userDiscount?.value || 0;
+      if (p.userDiscount?.discountType === "PERCENT") {
+        return total + ((p.price * productDiscount) / 100);
+      } else {
+        return total + productDiscount;
+      }
+    }, 0);
+    commissionAmount = discount;
+  }
   
   if (discount > amount) discount = amount;
   discount = Number(discount.toFixed(2));
-  return { discount, finalAmount: Number((amount - discount).toFixed(2)), couponId: c._id };
+  return { discount, finalAmount: Number((amount - discount).toFixed(2)), couponId: c._id, coupon: c, commissionAmount };
 };
 
 // Create new order
@@ -213,7 +226,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
 
   const ids = items.map((x) => x.productId);
-  const products = await Product.find({ _id: { $in: ids }, isActive: true });
+  const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
   if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
 
   // Check stock before proceeding
@@ -240,7 +253,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     return res.status(400).json({ error: "min_order_not_met", minAmount });
   }
 
-  const { discount: coupDiscount, finalAmount: payableTotal, couponId } = await validateAndApplyCoupon(couponCode, totals.total);
+  const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
 
   const orderItems = totals.items.map((it) => {
     const p = products.find(x => x._id.toString() === it.product.toString());
@@ -277,6 +290,19 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
   const orderStatus = paymentMethod === "CASH" ? "PENDING_CASH_APPROVAL" : "PENDING_PAYMENT";
 
+  // Calculate user discount and partner commission
+  let userDiscountData = {
+    discountType: "PERCENT",
+    value: 0,
+    amount: coupDiscount
+  };
+  
+  let partnerCommissionData = {
+    couponId: couponId,
+    amount: commissionAmount || 0,
+    status: "PENDING"
+  };
+
   const doc = await Order.create({
     customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
     shippingAddress: {
@@ -296,7 +322,9 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     razorpayOrderId: razorpayOrder?.id,
     notes: notes || "",
     codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
-    codDueAmount: paymentMethod === "COD_20" ? Number((payableTotal * 0.8).toFixed(2)) : 0
+    codDueAmount: paymentMethod === "COD_20" ? Number((payableTotal * 0.8).toFixed(2)) : 0,
+    userDiscount: userDiscountData,
+    partnerCommission: partnerCommissionData
   });
 
   if (couponId) {
@@ -373,7 +401,7 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
       return res.status(500).json({ error: "razorpay_not_configured" });
     }
     const uniqueIds = [...new Set(items.map((x) => x.productId))];
-    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
+    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true, isLive: true });
     if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
     const settings = await Settings.getDefaultSettings();
@@ -417,7 +445,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
 
   try {
     const uniqueIds = [...new Set(items.map((x) => x.productId))];
-    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
+    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true, isLive: true });
     if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     // Stock re-check
     for (const it of items) {
@@ -433,7 +461,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
     }
     const totals = computeTotals(products, items);
 
-    const { discount: coupDiscount, finalAmount: payableTotal, couponId } = await validateAndApplyCoupon(couponCode, totals.total);
+    const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
 
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
@@ -450,6 +478,19 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
         image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") 
       };
     });
+    // Calculate user discount and partner commission
+    let userDiscountData = {
+      discountType: "PERCENT",
+      value: 0,
+      amount: coupDiscount
+    };
+    
+    let partnerCommissionData = {
+      couponId: couponId,
+      amount: commissionAmount || 0,
+      status: "PENDING"
+    };
+
     const doc = await Order.create({
       customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
       shippingAddress: {
@@ -471,7 +512,9 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       razorpaySignature: razorpay_signature,
       notes: notes || "",
       codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
-      codDueAmount: paymentMethod === "COD_20" ? Number((payableTotal * 0.8).toFixed(2)) : 0
+      codDueAmount: paymentMethod === "COD_20" ? Number((payableTotal * 0.8).toFixed(2)) : 0,
+      userDiscount: userDiscountData,
+      partnerCommission: partnerCommissionData
     });
 
     if (couponId) {
@@ -563,7 +606,7 @@ router.post("/verify-payment", async (req, res) => {
     // Re-validate stock and totals before marking paid
     try {
       const ids = order.items.map(i => i.product.toString());
-      const products = await Product.find({ _id: { $in: ids }, isActive: true });
+      const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
       // Stock check
       for (const it of order.items) {
         const p = products.find(x => x._id.toString() === it.product.toString());
@@ -678,17 +721,30 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
   try {
     const ids = items.map((x) => x.productId);
-    const products = await Product.find({ _id: { $in: ids }, isActive: true });
+    const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
     if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
 
-    const { discount: coupDiscount, finalAmount: payableTotal, couponId } = await validateAndApplyCoupon(couponCode, totals.total);
+    const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
 
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
       const v = it.variantSku ? (p?.variants || []).find(v => v.sku === String(it.variantSku)) : null;
       return { product: it.product, variantSku: it.variantSku, name: it.name, price: it.price, gst: it.gst, quantity: it.quantity, lineTotal: it.lineTotal, image: (v?.images?.[0]?.url || p?.images?.[0]?.url || "") };
     });
+    // Calculate user discount and partner commission
+    let userDiscountData = {
+      discountType: "PERCENT",
+      value: 0,
+      amount: coupDiscount
+    };
+    
+    let partnerCommissionData = {
+      couponId: couponId,
+      amount: commissionAmount || 0,
+      status: "PENDING"
+    };
+
     const doc = await Order.create({
       customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
       shippingAddress: {
@@ -708,7 +764,9 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
       notes: note || "",
       manualPayment: { amountPaid: Number(amountPaid || 0), utr: String(utr || ""), note: String(note || "") },
       codAdvancePercent: codAdvance20 ? 20 : 0,
-      codDueAmount: codAdvance20 ? Number((payableTotal * 0.8).toFixed(2)) : 0
+      codDueAmount: codAdvance20 ? Number((payableTotal * 0.8).toFixed(2)) : 0,
+      userDiscount: userDiscountData,
+      partnerCommission: partnerCommissionData
     });
 
     if (couponId) {
@@ -1130,6 +1188,10 @@ router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
   const prev2 = order.status;
   if (prev2 !== "SHIPPED") return res.status(400).json({ error: "invalid_transition" });
   order.status = "DELIVERED";
+  // Set partner commission to settled when order is delivered
+  if (order.partnerCommission) {
+    order.partnerCommission.status = "SETTLED";
+  }
   await order.save();
   try {
     await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${prev2} → DELIVERED` });
