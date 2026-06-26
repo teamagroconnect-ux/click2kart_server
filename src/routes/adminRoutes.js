@@ -5,6 +5,7 @@ import Product from "../models/Product.js";
 import Customer from "../models/Customer.js";
 import OfflineCustomer from "../models/OfflineCustomer.js";
 import Bill from "../models/Bill.js";
+import Partner from "../models/Partner.js";
 import { sendEmail } from "../lib/mailer.js";
 
 import Admin from "../models/Admin.js";
@@ -298,11 +299,15 @@ router.get("/customers", auth, requirePermission("customers"), async (req, res) 
   
   const customers = await Customer.find(filter).sort({ createdAt: -1 });
   
-  // Enrich with order counts
+  // Enrich with order counts and partner details
   const Order = (await import("../models/Order.js")).default;
   const enriched = await Promise.all(customers.map(async (c) => {
     const orderCount = await Order.countDocuments({ "customer.phone": c.phone });
-    return { ...c.toObject(), orderCount };
+    let partner = null;
+    if (c.kyc?.partnerInviteCode) {
+      partner = await Partner.findOne({ inviteCode: c.kyc.partnerInviteCode });
+    }
+    return { ...c.toObject(), orderCount, partner: partner ? partner.toObject() : null };
   }));
 
   res.json(enriched);
@@ -316,7 +321,13 @@ router.get("/customers/:id", auth, requirePermission("customers"), async (req, r
   const Bill = (await import("../models/Bill.js")).default;
   const orders = await Order.find({ "customer.phone": user.phone }).sort({ createdAt: -1 }).limit(10);
   const bills = await Bill.find({ customer: id }).sort({ createdAt: -1 }).limit(10);
-  res.json({ user, orders, bills });
+  
+  let partner = null;
+  if (user.kyc?.partnerInviteCode) {
+    partner = await Partner.findOne({ inviteCode: user.kyc.partnerInviteCode });
+  }
+  
+  res.json({ user, orders, bills, partner: partner ? partner.toObject() : null });
 });
 
 router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => {
