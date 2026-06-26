@@ -387,23 +387,26 @@ router.put("/partner/profile", (await import("../middleware/auth.js")).auth, asy
 // Change Partner Password
 router.put("/partner/change-password", (await import("../middleware/auth.js")).auth, async (req, res) => {
   if (req.user.role !== 'partner') return res.status(403).json({ error: 'forbidden' });
-  
+
   const { currentPassword, newPassword } = req.body;
-  
-  if (!currentPassword || !newPassword) {
+
+  if (!newPassword) {
     return res.status(400).json({ error: 'missing_fields' });
   }
-  
+
   const partner = await Partner.findById(req.user.id);
   if (!partner) return res.status(404).json({ error: 'not_found' });
-  
-  if (partner.password !== currentPassword) {
-    return res.status(401).json({ error: 'invalid_current_password' });
+
+  // Only check current password if one exists and is provided
+  if (partner.password && currentPassword) {
+    if (partner.password !== currentPassword) {
+      return res.status(401).json({ error: 'invalid_current_password' });
+    }
   }
-  
+
   partner.password = newPassword;
   await partner.save();
-  
+
   res.json({ message: 'password_updated' });
 });
 

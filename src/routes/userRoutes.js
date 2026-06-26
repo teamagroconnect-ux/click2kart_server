@@ -79,7 +79,7 @@ router.put("/profile", auth, requireRole("customer"), async (req, res) => {
 
 router.put("/change-password", auth, requireRole("customer"), async (req, res) => {
   const { currentPassword, newPassword, confirmPassword } = req.body;
-  if (!currentPassword || !newPassword || !confirmPassword) {
+  if (!newPassword || !confirmPassword) {
     return res.status(400).json({ error: "all_fields_required" });
   }
   if (newPassword !== confirmPassword) {
@@ -92,7 +92,8 @@ router.put("/change-password", auth, requireRole("customer"), async (req, res) =
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
-  if (user.password) {
+  // Only check current password if one exists and is provided
+  if (user.password && currentPassword) {
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       return res.status(401).json({ error: "incorrect_password" });
