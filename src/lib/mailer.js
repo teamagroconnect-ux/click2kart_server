@@ -97,7 +97,7 @@ export const renderMail = ({ heading, subheading, blocks, highlight, items, tota
       <div style="margin-top:24px;padding:8px 0">${b}</div>
       ${irows}
       <div style="margin-top:40px;padding:24px;background:#f8fafc;border-radius:16px;color:#64748b;font-size:13px;line-height:1.6;text-align:center;border:1px solid #f1f5f9">
-        This is a premium automated message from <strong>${company}</strong>. 
+        This is an automated message from <strong>${company}</strong>. 
         <br/>If you have any questions, our support team is here to help.
         <br/><br/>Mail us at: <a href="mailto:support@click2kart.net" style="color:#7c3aed;font-weight:700;text-decoration:none">support@click2kart.net</a>
       </div>

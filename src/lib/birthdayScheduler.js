@@ -39,7 +39,7 @@ const sendBirthdayWish = async (user, userType) => {
       </div>
 
       <div style="margin-top:40px;padding:24px;background:#f8fafc;border-radius:16px;color:#64748b;font-size:13px;line-height:1.6;text-align:center;border:1px solid #f1f5f9">
-        This is a premium automated birthday wish from <strong>${company}</strong>.<br/>If you have any questions, our support team is here to help.<br/><br/>Mail us at: <a href="mailto:${settings.supportEmail || 'support@click2kart.net'}" style="color:#7c3aed;font-weight:700;text-decoration:none">${settings.supportEmail || 'support@click2kart.net'}</a>
+        This is an automated birthday wish from <strong>${company}</strong>.<br/>If you have any questions, our support team is here to help.<br/><br/>Mail us at: <a href="mailto:${settings.supportEmail || 'support@click2kart.net'}" style="color:#7c3aed;font-weight:700;text-decoration:none">${settings.supportEmail || 'support@click2kart.net'}</a>
       </div>
       <div style="margin-top:32px;text-align:center;font-size:12px;color:#cbd5e1;font-weight:600;letter-spacing:0.05em">
         © ${new Date().getFullYear()} ${company.toUpperCase()}. ALL RIGHTS RESERVED.
