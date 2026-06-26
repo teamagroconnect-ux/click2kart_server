@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import { auth, requireRole } from "../middleware/auth.js";
 import SupportTicket from "../models/SupportTicket.js";
 import Order from "../models/Order.js";
@@ -10,14 +11,17 @@ const router = express.Router();
 router.post("/", auth, requireRole("customer"), async (req, res) => {
   try {
     const { subject, description, category, relatedOrder } = req.body;
-    const ticket = await SupportTicket.create({
+    const data = {
       user: req.user.id,
       subject,
       description,
       category,
-      relatedOrder,
       messages: [{ sender: 'user', message: description }]
-    });
+    };
+    if (relatedOrder && mongoose.isValidObjectId(relatedOrder)) {
+      data.relatedOrder = relatedOrder;
+    }
+    const ticket = await SupportTicket.create(data);
 
     // Notify Admin via socket
     notifyAdmin("new_ticket", ticket);
