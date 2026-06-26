@@ -102,7 +102,7 @@ router.post("/customer/verify-otp", async (req, res) => {
   await OTP.deleteOne({ _id: record._id });
 
   try {
-    const to = process.env.MAIL_TO || process.env.ADMIN_EMAIL || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    const to = "ladisrinivas88@gmail.com";
     if (to) {
       await sendEmail({
         to,
