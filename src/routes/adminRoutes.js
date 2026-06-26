@@ -97,6 +97,7 @@ router.delete("/staff/:id", auth, requireRole("admin"), async (req, res) => {
 
 router.get("/stats", auth, async (req, res) => {
   const Order = (await import("../models/Order.js")).default;
+  const SupportTicket = (await import("../models/SupportTicket.js")).default;
   const settings = await Settings.getDefaultSettings();
   const threshold = settings.lowStockThreshold || 5;
   
@@ -132,7 +133,7 @@ router.get("/stats", auth, async (req, res) => {
     }
   ]);
 
-  const [actualProductsCount, totalCustomers, pendingCustomers, skippedCustomers, totalBills, lowStockProducts, newOrders, pendingCash] = await Promise.all([
+  const [actualProductsCount, totalCustomers, pendingCustomers, skippedCustomers, totalBills, lowStockProducts, newOrders, pendingCash, pendingSupportTickets, inProgressSupportTickets, resolvedSupportTickets] = await Promise.all([
     Product.countDocuments({ isActive: true }),
     Customer.countDocuments({ isActive: true }),
     Customer.countDocuments({ approvalStatus: 'pending' }),
@@ -149,7 +150,10 @@ router.get("/stats", auth, async (req, res) => {
       .sort({ stock: 1 })
       .limit(20),
     Order.countDocuments({ status: "NEW" }),
-    Order.countDocuments({ status: "PENDING_ADMIN_APPROVAL" })
+    Order.countDocuments({ status: "PENDING_ADMIN_APPROVAL" }),
+    SupportTicket.countDocuments({ status: 'Open' }),
+    SupportTicket.countDocuments({ status: 'In Progress' }),
+    SupportTicket.countDocuments({ status: 'Resolved' })
   ]);
 
   const inv = invStats[0] || { totalSkus: 0, totalUnits: 0, outOfStock: 0, lowStockCount: 0 };
@@ -193,7 +197,10 @@ router.get("/stats", auth, async (req, res) => {
     totalBills, 
     lowStock: lowStock.sort((a, b) => a.stock - b.stock).slice(0, 10), 
     newOrders, 
-    pendingCash 
+    pendingCash,
+    pendingSupportTickets,
+    inProgressSupportTickets,
+    resolvedSupportTickets
   });
 });
 

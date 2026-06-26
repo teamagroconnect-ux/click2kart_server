@@ -410,4 +410,49 @@ router.put("/partner/change-password", (await import("../middleware/auth.js")).a
   res.json({ message: 'password_updated' });
 });
 
+// FORGOT PASSWORD - Step 1: Send OTP
+router.post("/partner/forgot-password", rateLimit("partner-forgot-password", 3, 600), async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: "missing_email" });
+  if (!validateEmailFormat(email)) return res.status(400).json({ error: "invalid_email_format" });
+
+  const partner = await Partner.findOne({ email: email.toLowerCase(), isActive: true });
+  if (!partner) return res.status(404).json({ error: "partner_not_found" });
+
+  const otp = Math.floor(1000 + Math.random() * 9000).toString();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  await OTP.findOneAndUpdate(
+    { email: email.toLowerCase(), purpose: "PARTNER_FORGOT_PASSWORD" },
+    { otp, expiresAt },
+    { upsert: true }
+  );
+
+  try {
+    await sendOTP(email, otp, "PARTNER_FORGOT_PASSWORD");
+    res.json({ message: "otp_sent" });
+  } catch (err) {
+    res.status(500).json({ error: "failed_to_send_email" });
+  }
+});
+
+// FORGOT PASSWORD - Step 2: Reset
+router.post("/partner/reset-password", rateLimit("partner-reset-password", 5, 600), async (req, res) => {
+  const { email, otp, newPassword } = req.body || {};
+  if (!email || !otp || !newPassword) return res.status(400).json({ error: "missing_fields" });
+
+  const record = await OTP.findOne({ email: email.toLowerCase(), otp, purpose: "PARTNER_FORGOT_PASSWORD" });
+  if (!record) return res.status(400).json({ error: "invalid_otp" });
+
+  const partner = await Partner.findOne({ email: email.toLowerCase() });
+  if (!partner) return res.status(404).json({ error: "partner_not_found" });
+
+  partner.password = newPassword;
+  await partner.save();
+
+  await OTP.deleteOne({ _id: record._id });
+
+  res.json({ message: "password_reset_success" });
+});
+
 export default router;

@@ -1209,16 +1209,37 @@ router.patch("/:id/deliver", auth, requireRole("admin"), async (req, res) => {
   try {
     await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${prev2} → DELIVERED` });
     const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+    const baseUrl = process.env.CLIENT_URL || "https://click2kart.net";
     const html = renderMail({
       heading: "Delivered",
-      subheading: "Your order has been delivered. We hope you enjoy your purchase.",
+      subheading: "Your order has been delivered. We hope you enjoy your purchase! Please take a moment to rate your order and products.",
       highlight: `Order ID: ${order._id}`,
       blocks: [
         { label: "Final Status", value: "DELIVERED" },
         { label: "Waybill", value: order.shipping?.waybill || "-" }
-      ]
+      ],
+      items: order.items.map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        price: it.price,
+        lineTotal: it.lineTotal
+      })),
+      totals: {
+        subtotal: order.totalEstimate - (order.gstTotal || 0),
+        gstTotal: order.gstTotal || 0,
+        total: order.totalEstimate
+      }
     });
-    if (to) await sendEmail({ to, subject: `Order delivered - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+    // Add the "Rate Us" button to the HTML
+    const rateButtonHtml = `
+      <div style="margin-top: 32px; text-align: center;">
+        <a href="${baseUrl}/orders/my" style="display: inline-block; padding: 16px 32px; background: linear-gradient(135deg,#7c3aed,#6366f1); color: white; text-decoration: none; border-radius: 14px; font-weight: 800; font-size: 14px; box-shadow: 0 10px 20px rgba(124,58,237,.3);">
+          🌟 Rate Your Order & Products
+        </a>
+      </div>
+    `;
+    const finalHtml = html.replace(/<\/div>\s*$/, rateButtonHtml + '</div>');
+    if (to) await sendEmail({ to, subject: `Order delivered - ${process.env.COMPANY_NAME || "Click2Kart"}`, html: finalHtml });
   } catch {}
   res.json({ success: true, order });
 });
