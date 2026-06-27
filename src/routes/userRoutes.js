@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import { auth, requireRole } from "../middleware/auth.js";
 import Customer from "../models/Customer.js";
+import Review from "../models/Review.js";
 
 const router = express.Router();
 
@@ -253,6 +254,13 @@ router.delete("/addresses/:id", auth, requireRole("customer"), async (req, res) 
   
   await user.save();
   res.json({ success: true });
+});
+
+// Get list of product IDs user has reviewed
+router.get("/reviews/products", auth, requireRole("customer"), async (req, res) => {
+  const reviews = await Review.find({ customer: req.user.id }).select("product").lean();
+  const productIds = reviews.map(r => r.product.toString());
+  res.json({ productIds });
 });
 
 export default router;
