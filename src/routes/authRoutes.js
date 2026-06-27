@@ -107,7 +107,7 @@ router.post("/customer/verify-otp", async (req, res) => {
     if (inviteCode) {
       partner = await Partner.findOne({ inviteCode });
     }
-    const to = "ladisrinivas88@gmail.com";
+    const to = "srinivastechnoservices@gmail.com";
     if (to) {
       await sendEmail({
         to,

@@ -45,7 +45,7 @@ const partnerSchema = new mongoose.Schema(
 partnerSchema.index({ email: 1 }, { sparse: true });
 
 partnerSchema.pre("save", async function (next) {
-  if (!this.inviteCode) {
+  if (this.isActive && !this.inviteCode) {
     let code;
     let isUnique = false;
     while (!isUnique) {

@@ -170,7 +170,7 @@ export const sendPartnerWelcome = async (partner) => {
         <div style="font-size:12px; letter-spacing:.3em; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; display:inline-block; padding:8px 20px; border-radius:100px; font-weight:900; text-transform:uppercase; margin-bottom:24px;">${company} PARTNER</div>
         <h1 style="margin:0 0 12px; font-size:32px; color:#0f172a; font-weight:900; letter-spacing:-0.02em;">Welcome Aboard, ${partner.name || 'Partner'}!</h1>
         <p style="color:#64748b; line-height:1.7; font-size:15px; margin:0;">
-          Your partner account has been created and is ready to use.
+          Your partner account has been approved and is ready to use!
         </p>
       </div>
 
@@ -186,9 +186,15 @@ export const sendPartnerWelcome = async (partner) => {
         </div>
         ` : ''}
         ${partner.phone ? `
-        <div style="display:flex; justify-content:space-between; padding:12px 0;">
+        <div style="display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #f1f5f9;">
           <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Phone:</div>
           <div style="font-size:14px; color:#1e293b; font-weight:700;">${partner.phone}</div>
+        </div>
+        ` : ''}
+        ${partner.inviteCode ? `
+        <div style="display:flex; justify-content:space-between; padding:12px 0;">
+          <div style="font-size:11px; color:#94a3b8; font-weight:800; letter-spacing:.1em; text-transform:uppercase;">Your Invite Code:</div>
+          <div style="font-size:18px; color:#7c3aed; font-weight:900; letter-spacing:4px;">${partner.inviteCode}</div>
         </div>
         ` : ''}
       </div>

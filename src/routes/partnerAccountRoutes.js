@@ -142,9 +142,36 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
 
 router.put("/:id/approve", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const updated = await Partner.findByIdAndUpdate(req.params.id, { isActive: true, isVerified: true }, { new: true });
-  if (!updated) return res.status(404).json({ error: "not_found" });
-  res.json(updated);
+  
+  // Find partner first
+  const partner = await Partner.findById(req.params.id);
+  if (!partner) return res.status(404).json({ error: "not_found" });
+  
+  // Generate invite code if not exists
+  if (!partner.inviteCode) {
+    let code;
+    let isUnique = false;
+    while (!isUnique) {
+      code = Math.floor(1000 + Math.random() * 9000).toString();
+      const existing = await Partner.findOne({ inviteCode: code });
+      if (!existing) isUnique = true;
+    }
+    partner.inviteCode = code;
+  }
+  
+  // Activate partner
+  partner.isActive = true;
+  partner.isVerified = true;
+  await partner.save();
+  
+  // Send welcome email to partner
+  try {
+    await sendPartnerWelcome(partner);
+  } catch (emailErr) {
+    console.error("Failed to send partner welcome email:", emailErr);
+  }
+  
+  res.json(partner);
 });
 
 router.delete("/:id", auth, requireRole("admin"), async (req, res) => {

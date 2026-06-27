@@ -296,23 +296,25 @@ router.post("/partner/verify-otp", async (req, res) => {
   
   // Send notification to admin
   try {
-    const adminEmail = process.env.ADMIN_EMAIL || process.env.SUPPORT_EMAIL;
+    const adminEmail = "srinivastechnoservices@gmail.com";
     if (adminEmail) {
       await sendEmail({
         to: adminEmail,
-        subject: `New Partner Application - ${data.name}`,
+        subject: `New Partner Application - ${process.env.COMPANY_NAME || "Click2Kart"}`,
         html: `
           <div style="font-family: system-ui; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
-            <h2 style="color:#111; margin:0 0 12px;">New Partner Application</h2>
+            <h2 style="color:#111; margin:0 0 12px; font-weight:800;">New Partner Application</h2>
             <p style="color:#4b5563; line-height:1.6;">A new partner has applied and verified their email!</p>
-            <div style="background:#f3f4f6; border-radius:10px; padding:16px;">
-              <h3 style="color:#111; margin:0 0 12px; font-size:16px;">Partner Details:</h3>
-              <p style="color:#374151; margin:6px 0;"><strong>Name:</strong> ${data.name}</p>
-              <p style="color:#374151; margin:6px 0;"><strong>Email:</strong> ${data.email}</p>
-              <p style="color:#374151; margin:6px 0;"><strong>Phone:</strong> ${data.phone}</p>
-              <p style="color:#374151; margin:6px 0;"><strong>Business:</strong> ${data.businessName || '-'}</p>
-              <p style="color:#374151; margin:6px 0;"><strong>GST:</strong> ${data.gstNumber || '-'}</p>
-            </div>
+            <h3 style="color:#111; margin:16px 0 8px; font-weight:700;">Partner Details</h3>
+            <ul style="color:#111; line-height:1.8; padding-left:18px">
+              <li><strong>Name:</strong> ${data.name}</li>
+              <li><strong>Email:</strong> ${data.email}</li>
+              <li><strong>Phone:</strong> ${data.phone}</li>
+              <li><strong>Business:</strong> ${data.businessName || '-'}</li>
+              <li><strong>GST:</strong> ${data.gstNumber || '-'}</li>
+              <li><strong>PAN:</strong> ${data.panNumber || '-'}</li>
+              <li><strong>Address:</strong> ${data.address ? `${data.address}, ${data.city || ''}, ${data.state || ''} - ${data.pincode || ''}` : '-'}</li>
+            </ul>
             <p style="color:#6b7280; margin-top:16px; font-size:14px;">Please login to admin panel to review and approve this application.</p>
           </div>
         `
