@@ -214,7 +214,7 @@ router.post("/partner/signup", rateLimit("partner-signup", 3, 600), async (req, 
   }
   
   const existingPartner = await Partner.findOne({ email });
-  if (existingPartner && existingPartner.isVerified) {
+  if (existingPartner) {
     return res.status(400).json({ error: "email_already_registered" });
   }
   
