@@ -203,7 +203,7 @@ router.post("/partner/login", rateLimit("partner-login", 10, 600), async (req, r
 
 // Partner Signup Step 1 - Send OTP
 router.post("/partner/signup", rateLimit("partner-signup", 3, 600), async (req, res) => {
-  const { name, email, phone, businessName, gstNumber, panNumber, address, city, state, pincode, bloodGroup, password } = req.body;
+  const { name, email, phone, businessName, gstNumber, panNumber, address, city, state, district, pincode, password } = req.body;
   
   if (!name || !email || !phone || !password) {
     return res.status(400).json({ error: "missing_required_fields" });
@@ -236,8 +236,8 @@ router.post("/partner/signup", rateLimit("partner-signup", 3, 600), async (req, 
         address,
         city,
         state,
+        district,
         pincode,
-        bloodGroup,
         password
       }
     },
@@ -285,8 +285,8 @@ router.post("/partner/verify-otp", async (req, res) => {
     address: data.address,
     city: data.city,
     state: data.state,
+    district: data.district,
     pincode: data.pincode,
-    bloodGroup: data.bloodGroup,
     isVerified: true,
     isActive: false // Needs admin approval
   });
@@ -353,8 +353,8 @@ router.put("/partner/profile", (await import("../middleware/auth.js")).auth, asy
     address,
     city,
     state,
+    district,
     pincode,
-    bloodGroup,
     bankAccount,
     profilePicture,
     idCard
@@ -369,8 +369,8 @@ router.put("/partner/profile", (await import("../middleware/auth.js")).auth, asy
   if (address !== undefined) updateData.address = address;
   if (city !== undefined) updateData.city = city;
   if (state !== undefined) updateData.state = state;
+  if (district !== undefined) updateData.district = district;
   if (pincode !== undefined) updateData.pincode = pincode;
-  if (bloodGroup !== undefined) updateData.bloodGroup = bloodGroup;
   if (bankAccount !== undefined) updateData.bankAccount = bankAccount;
   if (profilePicture !== undefined) updateData.profilePicture = profilePicture;
   if (idCard !== undefined) updateData.idCard = idCard;
