@@ -90,11 +90,22 @@ async function computeSummaryForPartner(partner) {
 // Public: Validate partner invite code
 router.get("/validate-invite-code", async (req, res) => {
   const { code } = req.query;
-  if (!code) {
+  if (!code || !String(code).trim()) {
     return res.status(400).json({ error: "missing_code" });
   }
   
-  const partner = await Partner.findOne({ inviteCode: code.trim(), isActive: true, isVerified: true }).select("name businessName inviteCode");
+  const trimmedCode = String(code).trim();
+  
+  console.log("Validating invite code:", trimmedCode);
+  
+  const partner = await Partner.findOne({ 
+    inviteCode: trimmedCode, 
+    isActive: true, 
+    isVerified: true 
+  }).select("name businessName inviteCode isActive isVerified");
+  
+  console.log("Found partner:", partner);
+  
   if (!partner) {
     return res.status(404).json({ error: "invalid_code" });
   }

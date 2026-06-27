@@ -89,7 +89,7 @@ router.get("/:id", auth, requireRole("admin"), async (req, res) => {
 
   // Get referred businesses (customers who used partner's invite code)
   const referredBusinesses = await Customer.find({
-    "kyc.partnerInviteCode": { $in: couponCodes }
+    partnerId: partner._id
   }).sort({ createdAt: -1 });
 
   res.json({
