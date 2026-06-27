@@ -63,6 +63,15 @@ router.post("/customer/signup", rateLimit("customer-signup", 3, 600), async (req
   const exists = await Customer.findOne({ $or: [{ email: email.toLowerCase() }, { phone }] });
   if (exists) return res.status(400).json({ error: "user_already_exists" });
 
+  // Validate invite code if provided
+  let partner = null;
+  if (inviteCode) {
+    partner = await Partner.findOne({ inviteCode, isActive: true, isVerified: true });
+    if (!partner) {
+      return res.status(400).json({ error: "invalid_invite_code" });
+    }
+  }
+
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
@@ -89,6 +98,13 @@ router.post("/customer/verify-otp", async (req, res) => {
   if (!record) return res.status(400).json({ error: "invalid_otp" });
 
   const { name, phone, password, inviteCode } = record.metadata;
+  
+  // Find partner by invite code again
+  let partner = null;
+  if (inviteCode) {
+    partner = await Partner.findOne({ inviteCode, isActive: true, isVerified: true });
+  }
+  
   const customer = await Customer.create({
     name,
     email: email.toLowerCase(),
@@ -97,16 +113,13 @@ router.post("/customer/verify-otp", async (req, res) => {
     isVerified: true,
     isActive: false,
     approvalStatus: 'pending',
-    kyc: { partnerInviteCode: inviteCode || "" }
+    kyc: { partnerInviteCode: inviteCode || "" },
+    partnerId: partner ? partner._id : null
   });
 
   await OTP.deleteOne({ _id: record._id });
 
   try {
-    let partner = null;
-    if (inviteCode) {
-      partner = await Partner.findOne({ inviteCode });
-    }
     const to = "srinivastechnoservices@gmail.com";
     if (to) {
       await sendEmail({

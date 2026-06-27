@@ -86,6 +86,25 @@ async function computeSummaryForPartner(partner) {
   };
 }
 
+// Public: Validate partner invite code
+router.get("/validate-invite-code", async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).json({ error: "missing_code" });
+  }
+  
+  const partner = await Partner.findOne({ inviteCode: code, isActive: true, isVerified: true }).select("name businessName inviteCode");
+  if (!partner) {
+    return res.status(404).json({ error: "invalid_code" });
+  }
+  
+  res.json({
+    valid: true,
+    partnerName: partner.name,
+    businessName: partner.businessName
+  });
+});
+
 router.get("/categories", async (req, res) => {
   const items = await getOrSetCache("categories:all", async () => {
     return await Category.find({ isActive: true }).sort({ name: 1 }).select({ name: 1, description: 1 });
@@ -332,11 +351,20 @@ router.get("/partner/me", (await import("../middleware/auth.js")).auth, async (r
   const partner = await Partner.findById(req.user.id).lean();
   if (!partner) return res.status(404).json({ error: "not_found" });
   
+  // Find referred businesses (customers with partnerId or kyc.partnerInviteCode)
+  const referredBusinesses = await Customer.find({ 
+    $or: [
+      { partnerId: partner._id },
+      { "kyc.partnerInviteCode": partner.inviteCode }
+    ]
+  }).sort({ createdAt: -1 });
+  
   // Merge summary with full partner profile
   const summary = await computeSummaryForPartner(partner);
   res.json({
     ...partner,
-    ...summary
+    ...summary,
+    referredBusinesses
   });
 });
 

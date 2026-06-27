@@ -26,8 +26,10 @@ const customerSchema = new mongoose.Schema(
       district: { type: String, default: "" },
       state: { type: String, default: "" },
       pincode: { type: String, default: "" },
-      profilePicture: { type: String, default: "" }
+      profilePicture: { type: String, default: "" },
+      partnerInviteCode: { type: String, default: "" }
     },
+    partnerId: { type: mongoose.Schema.Types.ObjectId, ref: "Partner", default: null },
     isKycComplete: { type: Boolean, default: false }
   },
   { timestamps: true }
