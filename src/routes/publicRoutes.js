@@ -7,6 +7,7 @@ import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
 import Partner from "../models/Partner.js";
+import Customer from "../models/Customer.js";
 import OTP from "../models/OTP.js";
 import { sendOTP, sendEmail } from "../lib/mailer.js";
 import { getOrSetCache, getCacheVersion, bumpCacheVersion } from "../lib/redis.js";
@@ -93,7 +94,7 @@ router.get("/validate-invite-code", async (req, res) => {
     return res.status(400).json({ error: "missing_code" });
   }
   
-  const partner = await Partner.findOne({ inviteCode: code, isActive: true, isVerified: true }).select("name businessName inviteCode");
+  const partner = await Partner.findOne({ inviteCode: code.trim(), isActive: true, isVerified: true }).select("name businessName inviteCode");
   if (!partner) {
     return res.status(404).json({ error: "invalid_code" });
   }

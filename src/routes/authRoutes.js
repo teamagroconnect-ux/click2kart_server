@@ -65,8 +65,8 @@ router.post("/customer/signup", rateLimit("customer-signup", 3, 600), async (req
 
   // Validate invite code if provided
   let partner = null;
-  if (inviteCode) {
-    partner = await Partner.findOne({ inviteCode, isActive: true, isVerified: true });
+  if (inviteCode && inviteCode.trim()) {
+    partner = await Partner.findOne({ inviteCode: inviteCode.trim(), isActive: true, isVerified: true });
     if (!partner) {
       return res.status(400).json({ error: "invalid_invite_code" });
     }
@@ -101,8 +101,8 @@ router.post("/customer/verify-otp", async (req, res) => {
   
   // Find partner by invite code again
   let partner = null;
-  if (inviteCode) {
-    partner = await Partner.findOne({ inviteCode, isActive: true, isVerified: true });
+  if (inviteCode && inviteCode.trim()) {
+    partner = await Partner.findOne({ inviteCode: inviteCode.trim(), isActive: true, isVerified: true });
   }
   
   const customer = await Customer.create({
