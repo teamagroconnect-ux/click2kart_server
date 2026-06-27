@@ -11,7 +11,7 @@ import { sendPartnerWelcome } from "../lib/mailer.js";
 const router = express.Router();
 
 router.get("/", auth, requireRole("admin"), async (req, res) => {
-  const items = await Partner.find({ isActive: true }).sort({ name: 1 });
+  const items = await Partner.find({}).sort({ createdAt: -1 });
   res.json(items);
 });
 
@@ -134,9 +134,23 @@ router.put("/:id", auth, requireRole("admin"), async (req, res) => {
   if (req.body?.phone != null) payload.phone = String(req.body.phone).trim();
   if (req.body?.password !== undefined) payload.password = req.body.password ? String(req.body.password).trim() : undefined;
   if (req.body?.isActive != null) payload.isActive = !!req.body.isActive;
+  if (req.body?.isVerified != null) payload.isVerified = !!req.body.isVerified;
   const updated = await Partner.findByIdAndUpdate(req.params.id, payload, { new: true });
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
+});
+
+router.put("/:id/approve", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const updated = await Partner.findByIdAndUpdate(req.params.id, { isActive: true, isVerified: true }, { new: true });
+  if (!updated) return res.status(404).json({ error: "not_found" });
+  res.json(updated);
+});
+
+router.delete("/:id", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  await Partner.findByIdAndDelete(req.params.id);
+  res.json({ success: true });
 });
 
 export default router;
