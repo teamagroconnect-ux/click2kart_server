@@ -124,12 +124,12 @@ router.post("/customer/verify-otp", async (req, res) => {
     if (to) {
       await sendEmail({
         to,
-        subject: `New customer application - ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        subject: `New retailer application - ${process.env.COMPANY_NAME || "Click2Kart"}`,
         html: `
           <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
-            <h2 style="color:#111827;margin:0 0 12px;font-weight:800">New Customer Verified OTP</h2>
+            <h2 style="color:#111827;margin:0 0 12px;font-weight:800">New Retailer Verified OTP</h2>
             <p style="color:#374151;line-height:1.6">A new user has completed verification and is awaiting approval.</p>
-            <h3 style="color:#111827;margin:16px 0 8px;font-weight:700">Customer Details</h3>
+            <h3 style="color:#111827;margin:16px 0 8px;font-weight:700">Retailer Details</h3>
             <ul style="color:#111827;line-height:1.8;padding-left:18px">
               <li><b>Name:</b> ${customer.name}</li>
               <li><b>Email:</b> ${customer.email || "-"}</li>
@@ -143,7 +143,6 @@ router.post("/customer/verify-otp", async (req, res) => {
                 <li><b>Partner Email:</b> ${partner.email || "-"}</li>
                 <li><b>Partner Phone:</b> ${partner.phone || "-"}</li>
                 <li><b>Partner Invite Code:</b> ${partner.inviteCode}</li>
-                <li><b>Partner Business Name:</b> ${partner.businessName || "-"}</li>
               </ul>
             ` : ''}
           </div>

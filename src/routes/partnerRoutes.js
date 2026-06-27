@@ -115,9 +115,9 @@ router.get("/me", auth, requireRole("partner"), async (req, res) => {
   const payouts = await PartnerPayout.find({ couponCode: { $in: couponCodes } }).sort({ createdAt: -1 });
   const totalPaid = payouts.reduce((sum, p) => sum + (p.amount || 0), 0);
 
-  // Get referred businesses (customers who used partner's invite code)
+  // Get referred retailers (retailers who used partner's invite code)
   const referredBusinesses = await Customer.find({
-    "kyc.partnerInviteCode": { $in: coupons.map(c => c.code) }
+    partnerId: partner._id
   }).sort({ createdAt: -1 });
 
   res.json({
