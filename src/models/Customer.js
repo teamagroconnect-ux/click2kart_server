@@ -9,6 +9,17 @@ const customerSchema = new mongoose.Schema(
     email: { type: String, unique: true, lowercase: true, trim: true, sparse: true },
     password: { type: String, minlength: 6 },
     address: { type: String, default: "" },
+    addresses: [{ 
+      fullName: String, 
+      phone: String, 
+      addressLine1: String, 
+      addressLine2: String, 
+      city: String, 
+      district: String, 
+      state: String, 
+      pincode: String, 
+      isDefault: { type: Boolean, default: false } 
+    }],
     purchaseHistory: [{ type: mongoose.Schema.Types.ObjectId, ref: "Bill" }],
     isVerified: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
