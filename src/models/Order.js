@@ -80,7 +80,17 @@ const orderSchema = new mongoose.Schema(
       type: { type: String, enum: ["PERCENT", "FLAT"], default: "PERCENT" },
       value: { type: Number, default: 0 },
       amount: { type: Number, default: 0 }
-    }
+    },
+    pickupAddress: {
+      line1: { type: String },
+      line2: { type: String },
+      city: { type: String },
+      state: { type: String },
+      pincode: { type: String },
+      country: { type: String, default: "India" }
+    },
+    sellerGst: { type: String, default: "" },
+    pickupLocationName: { type: String, default: "" }
   },
   { timestamps: true }
 );

@@ -223,7 +223,9 @@ router.post("/delhivery/create", auth, requirePermission("orders"), async (req, 
   if (!order) return res.status(404).json({ error: "not_found" });
   const base = getBase();
   const token = getToken();
-  const pickup = process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse";
+  const Settings = (await import("../models/Settings.js")).default;
+  const settings = await Settings.getDefaultSettings();
+  const pickup = settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse";
   const dims = {
     weight: Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
     length: Number(process.env.DELHIVERY_PACKAGE_LENGTH || 10),
@@ -290,6 +292,16 @@ router.post("/delhivery/create", auth, requirePermission("orders"), async (req, 
   }
   order.shipping = { provider: "DELHIVERY", waybill, status, trackingUrl };
   order.shippingAddress = { line1: address?.line1 || "", line2: address?.line2 || "", city: address?.city || "", state: address?.state || "", pincode: address?.pincode || "" };
+  order.pickupAddress = {
+    line1: settings.pickupLine1 || "",
+    line2: settings.pickupLine2 || "",
+    city: settings.pickupCity || "",
+    state: settings.pickupState || "",
+    pincode: settings.pickupPincode || "",
+    country: settings.pickupCountry || "India"
+  };
+  order.pickupLocationName = pickup;
+  order.sellerGst = settings.companyGst || "";
   await order.save();
   res.json({ waybill, trackingUrl, status });
 });

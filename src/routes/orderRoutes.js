@@ -50,8 +50,9 @@ const tryCreateDelhiveryShipment = async (order) => {
     const base = getDelhiveryBase();
     if (!token || !base) throw new Error("Delhivery not configured");
 
-    const PICKUP_LOCATION = String(process.env.DELHIVERY_PICKUP_LOCATION || "").trim();
-    if (!PICKUP_LOCATION) throw new Error("DELHIVERY_PICKUP_LOCATION is not configured in environment");
+    const settings = await Settings.getDefaultSettings();
+    const PICKUP_LOCATION = String(settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "").trim();
+    if (!PICKUP_LOCATION) throw new Error("DELHIVERY_PICKUP_LOCATION is not configured in environment or settings");
 
     console.log("DEBUG PICKUP LOCATION:", PICKUP_LOCATION);
 
@@ -88,9 +89,17 @@ const tryCreateDelhiveryShipment = async (order) => {
     let totalQuantity = 0;
     (order.items || []).forEach(it => {
       const p = products.find(prod => prod._id.toString() === it.product.toString());
-      if (p && p.weight) {
-        totalWeightGrams += (p.weight * it.quantity);
+      // Check if item has variant sku, use variant weight if available, else product weight
+      let itemWeight = 0;
+      if (p) {
+        if (it.variantSku) {
+          const variant = p.variants?.find(v => v.sku === it.variantSku);
+          itemWeight = variant?.weight || p.weight || 0;
+        } else {
+          itemWeight = p.weight || 0;
+        }
       }
+      totalWeightGrams += (itemWeight * it.quantity);
       totalQuantity += it.quantity;
     });
 
@@ -165,6 +174,17 @@ const tryCreateDelhiveryShipment = async (order) => {
         trackingUrl: `https://track.delhivery.com/track/package/${wbFinal}`
       };
       order.shippingAddress = addr;
+      // Update pickup info from settings
+      order.pickupAddress = {
+        line1: settings.pickupLine1 || "",
+        line2: settings.pickupLine2 || "",
+        city: settings.pickupCity || "",
+        state: settings.pickupState || "",
+        pincode: settings.pickupPincode || "",
+        country: settings.pickupCountry || "India"
+      };
+      order.pickupLocationName = PICKUP_LOCATION;
+      order.sellerGst = settings.companyGst || "";
       order.status = "SHIPPED";
       await order.save();
       return order;
@@ -325,6 +345,16 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
       state: cust.kyc?.state || "",
       pincode: cust.kyc?.pincode || ""
     },
+    pickupAddress: {
+      line1: settings.pickupLine1 || "",
+      line2: settings.pickupLine2 || "",
+      city: settings.pickupCity || "",
+      state: settings.pickupState || "",
+      pincode: settings.pickupPincode || "",
+      country: settings.pickupCountry || "India"
+    },
+    pickupLocationName: settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "",
+    sellerGst: settings.companyGst || "",
     items: orderItems,
     totalEstimate: payableTotal,
     couponCode: couponCode?.toUpperCase() || "",
@@ -473,6 +503,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       }
     }
     const totals = computeTotals(products, items);
+    const settings = await Settings.getDefaultSettings();
 
     const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
 
@@ -513,6 +544,16 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
         state: cust.kyc?.state || "",
         pincode: cust.kyc?.pincode || ""
       },
+      pickupAddress: {
+        line1: settings.pickupLine1 || "",
+        line2: settings.pickupLine2 || "",
+        city: settings.pickupCity || "",
+        state: settings.pickupState || "",
+        pincode: settings.pickupPincode || "",
+        country: settings.pickupCountry || "India"
+      },
+      pickupLocationName: settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "",
+      sellerGst: settings.companyGst || "",
       items: orderItems,
       totalEstimate: payableTotal,
       couponCode: couponCode?.toUpperCase() || "",
@@ -737,6 +778,7 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
     const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
     if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
+    const settings = await Settings.getDefaultSettings();
 
     const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
 
@@ -767,6 +809,16 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
         state: cust.kyc?.state || "",
         pincode: cust.kyc?.pincode || ""
       },
+      pickupAddress: {
+        line1: settings.pickupLine1 || "",
+        line2: settings.pickupLine2 || "",
+        city: settings.pickupCity || "",
+        state: settings.pickupState || "",
+        pincode: settings.pickupPincode || "",
+        country: settings.pickupCountry || "India"
+      },
+      pickupLocationName: settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "",
+      sellerGst: settings.companyGst || "",
       items: orderItems,
       totalEstimate: payableTotal,
       couponCode: couponCode?.toUpperCase() || "",
