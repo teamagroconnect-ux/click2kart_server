@@ -51,10 +51,10 @@ const tryCreateDelhiveryShipment = async (order) => {
     if (!token || !base) throw new Error("Delhivery not configured");
 
     const settings = await Settings.getDefaultSettings();
-    const PICKUP_LOCATION = String(settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "").trim();
-    if (!PICKUP_LOCATION) throw new Error("DELHIVERY_PICKUP_LOCATION is not configured in environment or settings");
+    const PICKUP_LOCATION_NAME = String(settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "").trim();
+    if (!PICKUP_LOCATION_NAME) throw new Error("DELHIVERY_PICKUP_LOCATION is not configured in environment or settings");
 
-    console.log("DEBUG PICKUP LOCATION:", PICKUP_LOCATION);
+    console.log("DEBUG PICKUP LOCATION NAME:", PICKUP_LOCATION_NAME);
 
     // Address extraction: Priority 1: order.shippingAddress, Priority 2: Customer.kyc
     let addr = order.shippingAddress || {};
@@ -122,9 +122,9 @@ const tryCreateDelhiveryShipment = async (order) => {
       .slice(0, 50);
 
     const shipment = {
-      pickup_location: PICKUP_LOCATION,
       name: String(order.customer.name),
       add: String(addr.line1),
+      address2: String(addr.line2 || ""),
       city: String(addr.city),
       state: String(addr.state),
       country: "India",
@@ -143,6 +143,16 @@ const tryCreateDelhiveryShipment = async (order) => {
     };
 
     const finalPayload = {
+      pickup_location: {
+        name: PICKUP_LOCATION_NAME,
+        add: settings.pickupLine1 || "",
+        address2: settings.pickupLine2 || "",
+        city: settings.pickupCity || "",
+        state: settings.pickupState || "",
+        pin: settings.pickupPincode || "",
+        country: settings.pickupCountry || "India",
+        phone: settings.pickupPhone || ""
+      },
       shipments: [shipment]
     };
 
@@ -183,7 +193,7 @@ const tryCreateDelhiveryShipment = async (order) => {
         pincode: settings.pickupPincode || "",
         country: settings.pickupCountry || "India"
       };
-      order.pickupLocationName = PICKUP_LOCATION;
+      order.pickupLocationName = PICKUP_LOCATION_NAME;
       order.sellerGst = settings.companyGst || "";
       order.status = "SHIPPED";
       await order.save();

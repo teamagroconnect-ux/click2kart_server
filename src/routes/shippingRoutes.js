@@ -224,10 +224,33 @@ router.post("/delhivery/create", auth, requirePermission("orders"), async (req, 
   const base = getBase();
   const token = getToken();
   const Settings = (await import("../models/Settings.js")).default;
+  const Product = (await import("../models/Product.js")).default;
   const settings = await Settings.getDefaultSettings();
-  const pickup = settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse";
+  const pickupName = settings.pickupName || process.env.DELHIVERY_PICKUP_LOCATION || "Click2Kart Warehouse";
+  
+  // Calculate weight from order items
+  const productIds = (order.items || []).map(it => it.product);
+  const products = await Product.find({ _id: { $in: productIds } });
+  
+  let totalWeightGrams = 0;
+  let totalQuantity = 0;
+  (order.items || []).forEach(it => {
+    const p = products.find(prod => prod._id.toString() === it.product.toString());
+    let itemWeight = 0;
+    if (p) {
+      if (it.variantSku) {
+        const variant = p.variants?.find(v => v.sku === it.variantSku);
+        itemWeight = variant?.weight || p.weight || 0;
+      } else {
+        itemWeight = p.weight || 0;
+      }
+    }
+    totalWeightGrams += (itemWeight * it.quantity);
+    totalQuantity += it.quantity;
+  });
+  const weightKg = totalWeightGrams > 0 ? (totalWeightGrams / 1000) : 0.5;
+  
   const dims = {
-    weight: Number(process.env.DELHIVERY_PACKAGE_WEIGHT || 1),
     length: Number(process.env.DELHIVERY_PACKAGE_LENGTH || 10),
     breadth: Number(process.env.DELHIVERY_PACKAGE_WIDTH || 10),
     height: Number(process.env.DELHIVERY_PACKAGE_HEIGHT || 10)
@@ -254,41 +277,60 @@ router.post("/delhivery/create", auth, requirePermission("orders"), async (req, 
       }
 
       const paymentMode = order.paymentMethod === "RAZORPAY" ? "Prepaid" : "COD";
-      const codAmount = paymentMode === "COD" ? Number(order.codDueAmount || order.totalEstimate || 0).toFixed(2) : "0.00";
+      const codAmount = paymentMode === "COD" ? Number(order.codDueAmount || order.totalEstimate || 0) : 0;
 
       // Create Shipment
-      const payload = {
-        pickup_location: pickup,
-        shipments: [
-          {
-            waybill,
-            name: order.customer.name,
-            add: address?.line1 || "",
-            address2: address?.line2 || "",
-            city: address?.city || "",
-            state: address?.state || "",
-            country: "India",
-            phone: order.customer.phone,
-            pin: address?.pincode || "",
-            order: order._id.toString(),
-            payment_mode: paymentMode,
-            products_desc: (order.items || []).map(i => i.name).join(", ").slice(0, 200),
-            cod_amount: codAmount,
-            total_amount: Number(order.totalEstimate || 0).toFixed(2),
-            ...dims
-          }
-        ]
+      const shipment = {
+        waybill,
+        name: order.customer.name,
+        add: address?.line1 || "",
+        address2: address?.line2 || "",
+        city: address?.city || "",
+        state: address?.state || "",
+        country: "India",
+        phone: String(order.customer.phone).replace(/\D/g, "").slice(-10),
+        pin: address?.pincode || "",
+        order: order._id.toString(),
+        payment_mode: paymentMode,
+        products_desc: (order.items || []).map(i => i.name).join(", ").slice(0, 200),
+        cod_amount: codAmount,
+        total_amount: Number(order.totalEstimate || 0),
+        quantity: totalQuantity,
+        weight: weightKg,
+        ...dims
       };
+      
+      const finalPayload = {
+        pickup_location: {
+          name: pickupName,
+          add: settings.pickupLine1 || "",
+          address2: settings.pickupLine2 || "",
+          city: settings.pickupCity || "",
+          state: settings.pickupState || "",
+          pin: settings.pickupPincode || "",
+          country: settings.pickupCountry || "India",
+          phone: settings.pickupPhone || ""
+        },
+        shipments: [shipment]
+      };
+
+      // Send request with correct Content-Type: application/x-www-form-urlencoded
+      const bodyStr = "format=json&data=" + encodeURIComponent(JSON.stringify(finalPayload));
       const resp = await fetch(`${base}/api/cmu/create.json`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Token ${token}` },
-        body: JSON.stringify(payload)
+        headers: { 
+          "Content-Type": "application/x-www-form-urlencoded", 
+          Authorization: `Token ${token}` 
+        },
+        body: bodyStr
       });
       const data = await resp.json();
       waybill = data?.packages?.[0]?.waybill || data?.waybill || waybill;
       trackingUrl = `https://www.delhivery.com/track/package/${waybill}`;
       status = data?.packages?.[0]?.status?.status || data?.status || status;
-    } catch {}
+    } catch (err) {
+      console.error("Delhivery create error:", err);
+    }
   }
   order.shipping = { provider: "DELHIVERY", waybill, status, trackingUrl };
   order.shippingAddress = { line1: address?.line1 || "", line2: address?.line2 || "", city: address?.city || "", state: address?.state || "", pincode: address?.pincode || "" };
@@ -300,7 +342,7 @@ router.post("/delhivery/create", auth, requirePermission("orders"), async (req, 
     pincode: settings.pickupPincode || "",
     country: settings.pickupCountry || "India"
   };
-  order.pickupLocationName = pickup;
+  order.pickupLocationName = pickupName;
   order.sellerGst = settings.companyGst || "";
   await order.save();
   res.json({ waybill, trackingUrl, status });
