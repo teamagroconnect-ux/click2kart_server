@@ -10,6 +10,7 @@ import { sendEmail } from "../lib/mailer.js";
 
 import Admin from "../models/Admin.js";
 import Settings from "../models/Settings.js";
+import AdminExcel from "../models/AdminExcel.js";
 
 const router = express.Router();
 
@@ -417,8 +418,6 @@ router.get("/analytics/top-buyers", auth, requireRole("admin"), async (req, res)
   })));
 });
 
-export default router;
-
 // Revenue and Top Products Summary
 router.get("/revenue/summary", auth, requireRole("admin"), async (req, res) => {
   const Order = (await import("../models/Order.js")).default;
@@ -571,3 +570,30 @@ router.get("/revenue/product/:id/skus", auth, requireRole("admin"), async (req, 
     res.status(500).json({ error: err.message });
   }
 });
+
+// Get Excel data
+router.get("/excel", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const excel = await AdminExcel.getDefaultExcel();
+    res.json(excel);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load excel data" });
+  }
+});
+
+// Update Excel data
+router.put("/excel", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const excel = await AdminExcel.getDefaultExcel();
+    if (req.body.data !== undefined) excel.data = req.body.data;
+    if (req.body.fileName !== undefined) excel.fileName = req.body.fileName;
+    await excel.save();
+    res.json(excel);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to update excel data" });
+  }
+});
+
+export default router;
