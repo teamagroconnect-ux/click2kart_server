@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const adminExcelSchema = new mongoose.Schema(
   {
-    data: { type: [[String]], default: [["Item", "Quantity", "Price", "Total"], ["", "", "", ""]] },
+    data: { type: [[mongoose.Schema.Types.Mixed]], default: [["Item", "Quantity", "Price", "Total"], ["", "", "", ""]] },
     fileName: { type: String, default: "admin-data" }
   },
   { timestamps: true }

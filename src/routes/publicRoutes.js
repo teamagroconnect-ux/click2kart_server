@@ -187,7 +187,11 @@ router.post("/partner/login", rateLimit("partner-login", 10, 600), async (req, r
   if (!partner) return res.status(404).json({ error: "not_found" });
   
   if (password) {
-    if (!partner.password || partner.password !== password) {
+    if (!partner.password) {
+      return res.status(401).json({ error: "no_password_set" });
+    }
+    const isValid = await partner.comparePassword(password);
+    if (!isValid) {
       return res.status(401).json({ error: "invalid_password" });
     }
   } else if (otp) {
@@ -441,7 +445,8 @@ router.put("/partner/change-password", (await import("../middleware/auth.js")).a
 
   // Only check current password if one exists and is provided
   if (partner.password && currentPassword) {
-    if (partner.password !== currentPassword) {
+    const isValid = await partner.comparePassword(currentPassword);
+    if (!isValid) {
       return res.status(401).json({ error: 'invalid_current_password' });
     }
   }
