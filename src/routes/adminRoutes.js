@@ -338,6 +338,69 @@ router.get("/customers/:id", auth, requirePermission("customers"), async (req, r
   res.json({ user, orders, bills, partner: partner ? partner.toObject() : null });
 });
 
+router.put("/customers/:id", auth, requirePermission("customers"), async (req, res) => {
+  const id = req.params.id;
+  const user = await Customer.findById(id);
+  if (!user) return res.status(404).json({ error: "not_found" });
+
+  const {
+    name,
+    email,
+    phone,
+    isActive,
+    approvalStatus,
+    kyc,
+    partnerInviteCode,
+    partnerUpdate
+  } = req.body || {};
+
+  if (name !== undefined) user.name = String(name).trim();
+  if (email !== undefined) user.email = String(email).trim().toLowerCase();
+  if (phone !== undefined) user.phone = String(phone).trim();
+  if (isActive !== undefined) user.isActive = Boolean(isActive);
+  if (approvalStatus !== undefined) user.approvalStatus = String(approvalStatus).trim();
+
+  if (kyc && typeof kyc === 'object') {
+    const kycFields = [
+      'businessName', 'gstin', 'pan', 'pincode', 'state', 'city', 'addressLine1', 'addressLine2', 'profilePicture'
+    ];
+    kycFields.forEach((field) => {
+      if (kyc[field] !== undefined) {
+        user.kyc[field] = String(kyc[field]).trim();
+      }
+    });
+  }
+
+  if (partnerInviteCode !== undefined) {
+    const code = String(partnerInviteCode).trim();
+    if (code && !/^\d{4}$/.test(code)) {
+      return res.status(400).json({ error: "invalid_partner_invite_code" });
+    }
+    user.kyc = user.kyc || {};
+    user.kyc.partnerInviteCode = code;
+  }
+
+  await user.save();
+
+  let partner = null;
+  if (user.kyc?.partnerInviteCode) {
+    partner = await Partner.findOne({ inviteCode: user.kyc.partnerInviteCode });
+    if (partner && partnerUpdate && typeof partnerUpdate === 'object') {
+      const partnerFields = [
+        'name', 'email', 'phone', 'businessName', 'gstNumber', 'panNumber', 'address', 'city', 'district', 'state', 'pincode', 'bankAccount', 'inviteCode'
+      ];
+      partnerFields.forEach((field) => {
+        if (partnerUpdate[field] !== undefined) {
+          partner[field] = String(partnerUpdate[field]).trim();
+        }
+      });
+      await partner.save();
+    }
+  }
+
+  res.json({ user, partner: partner ? partner.toObject() : null });
+});
+
 router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => {
   const id = req.params.id;
   
