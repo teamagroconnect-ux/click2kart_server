@@ -97,7 +97,7 @@ router.get("/grouped", async (req, res) => {
   const version = await getCacheVersion("products:grouped");
   
   // Create a unique key for the cache with versioning
-  const cacheKey = `products:grouped:v${version}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
+  const cacheKey = `products:grouped:v${version}:a=${isAdminUser}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
 
   const formatted = await getOrSetCache(cacheKey, async () => {
     const isAdminUser = isAdmin(req);
@@ -168,7 +168,7 @@ router.get("/", async (req, res) => {
   const version = await getCacheVersion("products:list");
   
   // Dynamic key based on query params
-  const cacheKey = `products:list:v${version}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
+  const cacheKey = `products:list:v${version}:a=${isAdminUser}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
 
   const result = await getOrSetCache(cacheKey, async () => {
     const isAdminUser = isAdmin(req);
@@ -375,7 +375,7 @@ router.get("/recommend", async (req, res) => {
 });
 
 router.post("/", auth, requirePermission("products"), async (req, res) => {
-  const { name, price, categoryId, subCategoryId, images, stock, weight, volumetricWeight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku, packSize, partnerBenefit, userDiscount } = req.body || {};
+  const { name, price, categoryId, subCategoryId, images, stock, weight, volumetricWeight, gst, description, highlights, specifications, bulkDiscountQuantity, bulkDiscountPriceReduction, mrp, bulkTiers, variants, brandId, minOrderQty, store, section, hsnCode, sku, packSize, partnerBenefit, userDiscount, isActive, isLive } = req.body || {};
   if (!name || price == null || stock == null || !categoryId) return res.status(400).json({ error: "missing_fields" });
   
   if (brandId && !mongoose.isValidObjectId(brandId)) return res.status(400).json({ error: "invalid_brand" });
@@ -441,8 +441,8 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     }) : [],
     partnerBenefit: partnerBenefit || { discountType: "PERCENT", value: 0 },
     userDiscount: userDiscount || { discountType: "PERCENT", value: 0 },
-    isActive: false,  // New products start as inactive, admin must activate manually
-    isLive: false
+    isActive: isActive != null ? !!isActive : true,
+    isLive: isLive != null ? !!isLive : false
   });
   try {
     if ((doc.variants || []).length > 0) {
