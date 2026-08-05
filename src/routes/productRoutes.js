@@ -92,6 +92,7 @@ router.get("/grouped", async (req, res) => {
 
   const { brand, category } = req.query;
   const canViewPrice = isViewerAuthorized(req);
+  const isAdminUser = isAdmin(req);
   
   // Get current version for grouped products to avoid slow pattern deletes
   const version = await getCacheVersion("products:grouped");
@@ -100,7 +101,6 @@ router.get("/grouped", async (req, res) => {
   const cacheKey = `products:grouped:v${version}:a=${isAdminUser}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
 
   const formatted = await getOrSetCache(cacheKey, async () => {
-    const isAdminUser = isAdmin(req);
     const query = { isActive: true };
     if (!isAdminUser) {
       query.isLive = true;
@@ -163,6 +163,7 @@ router.get("/", async (req, res) => {
   const page = Math.max(1, parseInt(_page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(_limit) || 20));
   const canViewPrice = isViewerAuthorized(req);
+  const isAdminUser = isAdmin(req);
   
   // Get current version for products to avoid slow pattern deletes
   const version = await getCacheVersion("products:list");
@@ -171,7 +172,6 @@ router.get("/", async (req, res) => {
   const cacheKey = `products:list:v${version}:a=${isAdminUser}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
 
   const result = await getOrSetCache(cacheKey, async () => {
-    const isAdminUser = isAdmin(req);
     const query = { isActive: true };
     if (!isAdminUser) {
       query.isLive = true;
