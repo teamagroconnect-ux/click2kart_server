@@ -338,6 +338,32 @@ router.get("/customers/:id", auth, requirePermission("customers"), async (req, r
   res.json({ user, orders, bills, partner: partner ? partner.toObject() : null });
 });
 
+router.get("/partners/invite/:code", auth, requireRole("admin"), async (req, res) => {
+  const code = String(req.params.code || "").trim();
+  if (!/^\d{4}$/.test(code)) {
+    return res.status(400).json({ error: "invalid_invite_code" });
+  }
+
+  const partner = await Partner.findOne({ inviteCode: code });
+  if (!partner) return res.status(404).json({ error: "partner_not_found" });
+
+  res.json({
+    _id: partner._id,
+    name: partner.name,
+    email: partner.email,
+    phone: partner.phone,
+    businessName: partner.businessName,
+    gstNumber: partner.gstNumber,
+    panNumber: partner.panNumber,
+    address: partner.address,
+    city: partner.city,
+    district: partner.district,
+    state: partner.state,
+    pincode: partner.pincode,
+    inviteCode: partner.inviteCode
+  });
+});
+
 router.put("/customers/:id", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
   const user = await Customer.findById(id);
