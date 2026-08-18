@@ -269,7 +269,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
 
   const ids = items.map((x) => x.productId);
-  const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
+  const products = await Product.find({ _id: { $in: ids }, isActive: true });
   if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
 
   // Check stock before proceeding
@@ -454,7 +454,7 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
       return res.status(500).json({ error: "razorpay_not_configured" });
     }
     const uniqueIds = [...new Set(items.map((x) => x.productId))];
-    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true, isLive: true });
+    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
     if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
     const settings = await Settings.getDefaultSettings();
@@ -498,7 +498,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
 
   try {
     const uniqueIds = [...new Set(items.map((x) => x.productId))];
-    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true, isLive: true });
+    const products = await Product.find({ _id: { $in: uniqueIds }, isActive: true });
     if (products.length !== uniqueIds.length) return res.status(400).json({ error: "product_not_found" });
     // Stock re-check
     for (const it of items) {
@@ -670,7 +670,7 @@ router.post("/verify-payment", async (req, res) => {
     // Re-validate stock and totals before marking paid
     try {
       const ids = order.items.map(i => i.product.toString());
-      const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
+      const products = await Product.find({ _id: { $in: ids }, isActive: true });
       // Stock check
       for (const it of order.items) {
         const p = products.find(x => x._id.toString() === it.product.toString());
@@ -785,7 +785,7 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
   try {
     const ids = items.map((x) => x.productId);
-    const products = await Product.find({ _id: { $in: ids }, isActive: true, isLive: true });
+    const products = await Product.find({ _id: { $in: ids }, isActive: true });
     if (products.length !== ids.length) return res.status(400).json({ error: "product_not_found" });
     const totals = computeTotals(products, items);
     const settings = await Settings.getDefaultSettings();

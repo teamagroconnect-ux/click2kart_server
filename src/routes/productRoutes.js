@@ -101,8 +101,9 @@ router.get("/grouped", async (req, res) => {
   const cacheKey = `products:grouped:v${version}:a=${isAdminUser}:${brand || "all"}:${category || "all"}:${canViewPrice}`;
 
   const formatted = await getOrSetCache(cacheKey, async () => {
-    const query = { isActive: true };
+    const query = {};
     if (!isAdminUser) {
+      query.isActive = true;
       query.isLive = true;
     }
     if (brand && mongoose.isValidObjectId(brand)) {
@@ -172,8 +173,9 @@ router.get("/", async (req, res) => {
   const cacheKey = `products:list:v${version}:a=${isAdminUser}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
 
   const result = await getOrSetCache(cacheKey, async () => {
-    const query = { isActive: true };
+    const query = {};
     if (!isAdminUser) {
+      query.isActive = true;
       query.isLive = true;
     }
     if (brand && mongoose.isValidObjectId(brand)) query.brand = brand;
@@ -286,7 +288,7 @@ router.get("/:idOrSlug", async (req, res) => {
   await item.populate("subCategory", "name");
   
   const isAdminUser = isAdmin(req);
-  if (!item.isActive) return res.status(404).json({ error: "not_found" });
+  if (!isAdminUser && !item.isActive) return res.status(404).json({ error: "not_found" });
   if (!isAdminUser && !item.isLive) return res.status(404).json({ error: "not_found" });
   const canViewPrice = isViewerAuthorized(req);
   res.json(sanitizeProduct(item, canViewPrice));
@@ -306,7 +308,7 @@ router.get("/:idOrSlug/recommendations", async (req, res) => {
   }
   
   const isAdminUser = isAdmin(req);
-  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  if (!isAdminUser && (!base || !base.isActive)) return res.status(404).json({ error: "not_found" });
   if (!isAdminUser && !base.isLive) return res.status(404).json({ error: "not_found" });
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 6));
   const priceRange = {
@@ -320,9 +322,6 @@ router.get("/:idOrSlug/recommendations", async (req, res) => {
     ...(base.price != null ? { price: priceRange } : {}),
     _id: { $ne: base._id }
   };
-  if (!isAdminUser) {
-    itemsQuery.isLive = true;
-  }
   const items = await Product.find(itemsQuery)
     .sort({ stock: -1, createdAt: -1 })
     .limit(limit);
@@ -336,7 +335,7 @@ router.get("/recommend", async (req, res) => {
   if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "invalid_id" });
   const base = await Product.findById(id).select({ category: 1, brand: 1, price: 1, isActive: 1 });
   const isAdminUser = isAdmin(req);
-  if (!base || !base.isActive) return res.status(404).json({ error: "not_found" });
+  if (!isAdminUser && (!base || !base.isActive)) return res.status(404).json({ error: "not_found" });
   if (!isAdminUser && !base.isLive) return res.status(404).json({ error: "not_found" });
   const priceRange = {
     $gte: Math.max(0, Number(base.price || 0) * 0.8),
@@ -360,9 +359,6 @@ router.get("/recommend", async (req, res) => {
     ...(base.price != null ? { price: priceRange } : {}),
     _id: excludeIds.length ? { $ne: base._id, $nin: excludeIds } : { $ne: base._id }
   };
-  if (!isAdminUser) {
-    filter.isLive = true;
-  }
   const candidates = await Product.find(filter).sort({ stock: -1, createdAt: -1 }).limit(20).lean();
   const withMargin = candidates.map(c => {
     const margin = (c.margin != null) ? Number(c.margin) : ((c.mrp && c.mrp > c.price) ? (c.mrp - c.price) : 0);
@@ -441,8 +437,8 @@ router.post("/", auth, requirePermission("products"), async (req, res) => {
     }) : [],
     partnerBenefit: partnerBenefit || { discountType: "PERCENT", value: 0 },
     userDiscount: userDiscount || { discountType: "PERCENT", value: 0 },
-    isActive: isActive != null ? !!isActive : true,
-    isLive: isLive != null ? !!isLive : false
+    isActive: isActive != null ? !!isActive : false,
+    isLive: isLive != null ? !!isLive : true
   });
   try {
     if ((doc.variants || []).length > 0) {
@@ -831,9 +827,9 @@ router.get("/suggest", async (req, res) => {
   const q = req.query.q ? String(req.query.q).trim() : "";
   if (!q) return res.json([]);
   const isAdminUser = isAdmin(req);
-  const base = { isActive: true };
+  const base = {};
   if (!isAdminUser) {
-    base.isLive = true;
+    base.isActive = true;
   }
   let items = [];
   if (q.length >= 2) {

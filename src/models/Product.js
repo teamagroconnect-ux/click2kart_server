@@ -72,7 +72,7 @@ const productSchema = new mongoose.Schema(
       default: []
     },
     variantDisplayType: { type: String, enum: ['selector', 'matrix'], default: 'selector' },
-    isActive: { type: Boolean, default: true },
+    isActive: { type: Boolean, default: false },
     isVerified: { type: Boolean, default: true },
     isLive: { type: Boolean, default: true },
     ratingAvg: { type: Number, default: 0, min: 0, max: 5 },
