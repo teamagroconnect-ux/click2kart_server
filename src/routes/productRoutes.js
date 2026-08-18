@@ -160,7 +160,7 @@ router.get("/", async (req, res) => {
     console.error("Failed to update existing products:", e);
   }
   
-  const { brand, category, subCategory, store, section, q, page: _page, limit: _limit } = req.query;
+  const { brand, category, subCategory, store, section, q, status, page: _page, limit: _limit } = req.query;
   const page = Math.max(1, parseInt(_page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(_limit) || 20));
   const canViewPrice = isViewerAuthorized(req);
@@ -170,13 +170,19 @@ router.get("/", async (req, res) => {
   const version = await getCacheVersion("products:list");
   
   // Dynamic key based on query params
-  const cacheKey = `products:list:v${version}:a=${isAdminUser}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:vp=${canViewPrice}`;
+  const cacheKey = `products:list:v${version}:a=${isAdminUser}:q=${q || ""}:p=${page}:l=${limit}:b=${brand || ""}:c=${category || ""}:sc=${subCategory || ""}:st=${store || ""}:sec=${section || ""}:status=${status || "all"}:vp=${canViewPrice}`;
 
   const result = await getOrSetCache(cacheKey, async () => {
     const query = {};
     if (!isAdminUser) {
       query.isActive = true;
       query.isLive = true;
+    } else {
+      if (status === "active") {
+        query.isActive = true;
+      } else if (status === "inactive") {
+        query.isActive = false;
+      }
     }
     if (brand && mongoose.isValidObjectId(brand)) query.brand = brand;
     if (category && mongoose.isValidObjectId(category)) query.category = category;

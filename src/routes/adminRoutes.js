@@ -660,10 +660,50 @@ router.get("/revenue/product/:id/skus", auth, requireRole("admin"), async (req, 
   }
 });
 
-// Get Excel data
-router.get("/excel", auth, requireRole("admin"), async (req, res) => {
+// Get Excel list
+router.get("/excel/list", auth, requireRole("admin"), async (req, res) => {
   try {
-    const excel = await AdminExcel.getDefaultExcel();
+    const list = await AdminExcel.find({}).select("fileName updatedAt").sort({ updatedAt: -1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load excel list" });
+  }
+});
+
+// Create new Excel sheet
+router.post("/excel", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const { fileName, data } = req.body || {};
+    const name = String(fileName || "New Spreadsheet").trim();
+    const sheet = await AdminExcel.create({
+      fileName: name,
+      data: data || [["Item", "Quantity", "Price", "Total"], ["", "", "", ""]]
+    });
+    res.status(201).json(sheet);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to create excel sheet" });
+  }
+});
+
+// Get specific Excel data or default
+router.get("/excel/:id?", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    let excel;
+    if (id && mongoose.isValidObjectId(id)) {
+      excel = await AdminExcel.findById(id);
+    } else {
+      excel = await AdminExcel.findOne().sort({ updatedAt: -1 });
+      if (!excel) {
+        excel = await AdminExcel.create({
+          fileName: "admin-data",
+          data: [["Item", "Quantity", "Price", "Total"], ["", "", "", ""]]
+        });
+      }
+    }
+    if (!excel) return res.status(404).json({ error: "Excel sheet not found" });
     res.json(excel);
   } catch (e) {
     console.error(e);
@@ -671,10 +711,13 @@ router.get("/excel", auth, requireRole("admin"), async (req, res) => {
   }
 });
 
-// Update Excel data
-router.put("/excel", auth, requireRole("admin"), async (req, res) => {
+// Update specific Excel data
+router.put("/excel/:id", auth, requireRole("admin"), async (req, res) => {
   try {
-    const excel = await AdminExcel.getDefaultExcel();
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "Invalid ID" });
+    const excel = await AdminExcel.findById(id);
+    if (!excel) return res.status(404).json({ error: "Excel sheet not found" });
     if (req.body.data !== undefined) excel.data = req.body.data;
     if (req.body.fileName !== undefined) excel.fileName = req.body.fileName;
     await excel.save();
@@ -682,6 +725,47 @@ router.put("/excel", auth, requireRole("admin"), async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Failed to update excel data" });
+  }
+});
+
+// Fallback update Excel data without ID
+router.put("/excel", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const excel = await AdminExcel.findOne().sort({ updatedAt: -1 }) || await AdminExcel.create({});
+    if (req.body.data !== undefined) excel.data = req.body.data;
+    if (req.body.fileName !== undefined) excel.fileName = req.body.fileName;
+    await excel.save();
+    res.json(excel);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to update excel data" });
+  }
+});
+
+// Delete specific Excel sheet
+router.delete("/excel/:id", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "Invalid ID" });
+    
+    // Verify deletion password
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: "Deletion password required" });
+    }
+    const admin = await Admin.findById(req.user.id);
+    if (!admin) return res.status(404).json({ error: "Admin not found" });
+    const isValid = await admin.compareDeletionPassword(password);
+    if (!isValid) {
+      return res.status(401).json({ error: "Invalid deletion password" });
+    }
+
+    const excel = await AdminExcel.findByIdAndDelete(id);
+    if (!excel) return res.status(404).json({ error: "Excel sheet not found" });
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to delete excel sheet" });
   }
 });
 
