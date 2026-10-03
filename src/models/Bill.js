@@ -45,7 +45,7 @@ const billSchema = new mongoose.Schema(
     payable: { type: Number, required: true },
     couponCode: { type: String },
     gstBreakdown: { type: [gstBreakdownSchema], default: [] },
-    paymentType: { type: String, enum: ["CASH", "CARD", "UPI", "ONLINE"], default: "CASH" },
+    paymentType: { type: String, enum: ["CASH", "CARD", "UPI", "ONLINE", "CREDIT"], default: "CASH" },
     date: { type: Date, default: Date.now }
   },
   { timestamps: true }

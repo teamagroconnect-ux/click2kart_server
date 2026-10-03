@@ -41,7 +41,16 @@ const customerSchema = new mongoose.Schema(
       partnerInviteCode: { type: String, default: "" }
     },
     partnerId: { type: mongoose.Schema.Types.ObjectId, ref: "Partner", default: null },
-    isKycComplete: { type: Boolean, default: false }
+    isKycComplete: { type: Boolean, default: false },
+    isCreditEnabled: { type: Boolean, default: false },
+    creditLimit: { type: Number, default: 0 },
+    availableCredit: { type: Number, default: 0 },
+    usedCredit: { type: Number, default: 0 },
+    outstandingBalance: { type: Number, default: 0 },
+    deliverySettings: {
+      delhiveryEnabled: { type: Boolean, default: true },
+      localDeliveryEnabled: { type: Boolean, default: false }
+    }
   },
   { timestamps: true }
 );

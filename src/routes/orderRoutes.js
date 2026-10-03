@@ -16,6 +16,8 @@ import { notifyAdmin } from "../lib/socket.js";
 import fetch from "node-fetch";
 import axios from "axios";
 import Settings from "../models/Settings.js";
+import { confirmOrderPayment } from "../services/orderPayment.service.js";
+import { deductCreditForOrder, reverseCreditForOrder } from "../services/credit.service.js";
 
 const isAdmin = (req) => {
   try {
@@ -46,6 +48,10 @@ const getDims = () => ({
 
 const tryCreateDelhiveryShipment = async (order) => {
   try {
+    if (order?.deliveryChannel === "LOCAL_DELIVERY") {
+      console.log(`Order #${order._id} is configured for LOCAL_DELIVERY. Skipping Delhivery.`);
+      return null;
+    }
     const token = getDelhiveryToken();
     const base = getDelhiveryBase();
     if (!token || !base) throw new Error("Delhivery not configured");
@@ -255,6 +261,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     items, 
     notes, 
     paymentMethod,
+    deliveryChannel: reqDeliveryChannel,
     couponCode,
     razorpay_order_id,
     razorpay_payment_id,
@@ -262,11 +269,41 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   } = req.body || {};
 
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
-  if (!["CASH", "RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
+  if (!["CASH", "RAZORPAY", "COD_20", "CREDIT"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
 
-  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address");
+  const cust = await Customer.findById(req.user.id).select(
+    "name phone email isKycComplete kyc address isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings"
+  );
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+
+  // Credit and COD rules:
+  if (cust.isCreditEnabled) {
+    if (paymentMethod === "COD_20") {
+      return res.status(400).json({
+        error: "cod_not_allowed_for_credit_retailers",
+        message: "Cash on delivery is not available for credit-enabled retailers. Please choose Credit or Razorpay."
+      });
+    }
+  } else {
+    if (paymentMethod === "CREDIT") {
+      return res.status(403).json({
+        error: "credit_not_enabled",
+        message: "Credit facility is not enabled for your account."
+      });
+    }
+  }
+
+  // Delivery Channel determination:
+  const dSettings = cust.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false };
+  let deliveryChannel = "DELHIVERY";
+  if (dSettings.delhiveryEnabled && !dSettings.localDeliveryEnabled) {
+    deliveryChannel = "DELHIVERY";
+  } else if (!dSettings.delhiveryEnabled && dSettings.localDeliveryEnabled) {
+    deliveryChannel = "LOCAL_DELIVERY";
+  } else if (dSettings.delhiveryEnabled && dSettings.localDeliveryEnabled) {
+    deliveryChannel = reqDeliveryChannel === "LOCAL_DELIVERY" ? "LOCAL_DELIVERY" : "DELHIVERY";
+  }
 
   const ids = items.map((x) => x.productId);
   const products = await Product.find({ _id: { $in: ids }, isActive: true });
@@ -278,7 +315,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     if (!p) return res.status(400).json({ error: "product_not_found" });
     if (p.minOrderQty && Number(p.minOrderQty) > 0 && it.quantity < Number(p.minOrderQty)) {
       return res.status(400).json({ error: `MOQ_not_met:${p.minOrderQty}` });
-     }
+    }
     if (it.variantSku) {
       const v = (p.variants || []).find(v => v.sku === String(it.variantSku));
       if (!v || (v.stock || 0) < it.quantity) {
@@ -297,6 +334,17 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   }
 
   const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
+
+  // If paying with Credit: enforce full credit rule
+  if (paymentMethod === "CREDIT") {
+    const available = Number(cust.availableCredit || 0);
+    if (available < payableTotal) {
+      return res.status(400).json({
+        error: "insufficient_credit",
+        message: `Insufficient credit balance. Available: ₹${available.toFixed(2)}, Order Total: ₹${payableTotal.toFixed(2)}. Please pay online via Razorpay.`
+      });
+    }
+  }
 
   const orderItems = totals.items.map((it) => {
     const p = products.find(x => x._id.toString() === it.product.toString());
@@ -331,7 +379,28 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     }
   }
 
-  const orderStatus = paymentMethod === "CASH" ? "PENDING_CASH_APPROVAL" : "PENDING_PAYMENT";
+  let orderStatus = paymentMethod === "CASH" ? "PENDING_CASH_APPROVAL" : "PENDING_PAYMENT";
+  let paymentStatus = "PENDING";
+  let creditTxnId = undefined;
+  const newOrderId = new mongoose.Types.ObjectId();
+
+  if (paymentMethod === "CREDIT") {
+    try {
+      // Atomically reserve/deduct credit
+      const { ledger } = await deductCreditForOrder({
+        customerId: cust._id,
+        orderId: newOrderId,
+        orderTotal: payableTotal,
+        customerName: cust.name
+      });
+      creditTxnId = ledger._id;
+      orderStatus = "CONFIRMED";
+      paymentStatus = "PAID";
+    } catch (err) {
+      console.error("Credit deduction failed:", err);
+      return res.status(400).json({ error: "credit_deduction_failed", message: err.message });
+    }
+  }
 
   // Calculate user discount and partner commission
   let userDiscountData = {
@@ -347,6 +416,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   };
 
   const doc = await Order.create({
+    _id: newOrderId,
     customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
     shippingAddress: {
       line1: cust.kyc?.addressLine1 || cust.address || "",
@@ -371,7 +441,10 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     couponDiscount: coupDiscount,
     status: orderStatus,
     paymentMethod,
-    paymentStatus: "PENDING",
+    paymentStatus,
+    deliveryChannel,
+    localDelivery: deliveryChannel === "LOCAL_DELIVERY" ? { status: "PENDING" } : undefined,
+    creditTxnId,
     razorpayOrderId: razorpayOrder?.id,
     notes: notes || "",
     codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
@@ -381,38 +454,86 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   });
 
   if (couponId) {
-      await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
+    await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
+  }
+
+  // --- STOCK MANAGEMENT ---
+  for (const it of items) {
+    const qty = Number(it.quantity || 0);
+    if (it.variantSku) {
+      // Variant stock update
+      await Product.updateOne(
+        { _id: it.productId, "variants.sku": String(it.variantSku) },
+        { $inc: { "variants.$.stock": -qty } }
+      );
+    } else {
+      // Regular product stock update
+      await Product.updateOne(
+        { _id: it.productId },
+        { $inc: { stock: -qty } }
+      );
+    }
+  }
+  // Sync total product stock (sum of variants)
+  for (const id of ids) {
+    const p = await Product.findById(id);
+    if (p && p.variants && p.variants.length > 0) {
+      const sum = p.variants.filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
+      p.stock = sum;
+      await p.save();
+    }
+  }
+  // ------------------------
+
+  if (paymentMethod === "CREDIT") {
+    // Generate bill for credit order
+    try {
+      await createBillFromData({
+        customerData: { phone: doc.customer.phone, name: doc.customer.name, email: doc.customer.email },
+        items: doc.items.map(it => ({
+          product: it.product,
+          variantSku: it.variantSku ? String(it.variantSku) : undefined,
+          quantity: it.quantity
+        })),
+        paymentType: "CREDIT",
+        existingOrderId: doc._id
+      });
+    } catch (err) {
+      console.error("Auto-billing failed for credit order:", err);
     }
 
-    // --- STOCK MANAGEMENT ---
-    for (const it of items) {
-      const qty = Number(it.quantity || 0);
-      if (it.variantSku) {
-        // Variant stock update
-        await Product.updateOne(
-          { _id: it.productId, "variants.sku": String(it.variantSku) },
-          { $inc: { "variants.$.stock": -qty } }
-        );
-      } else {
-        // Regular product stock update
-        await Product.updateOne(
-          { _id: it.productId },
-          { $inc: { stock: -qty } }
-        );
+    // Auto-create shipment ONLY IF deliveryChannel is DELHIVERY
+    if (deliveryChannel === "DELHIVERY") {
+      try {
+        await tryCreateDelhiveryShipment(doc);
+      } catch (err) {
+        console.error("Auto Delhivery shipment failed for credit order:", err);
       }
     }
-    // Sync total product stock (sum of variants)
-    for (const id of ids) {
-      const p = await Product.findById(id);
-      if (p && p.variants && p.variants.length > 0) {
-        const sum = p.variants.filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
-        p.stock = sum;
-        await p.save();
-      }
-    }
-    // ------------------------
 
-    if (paymentMethod === "CASH") {
+    try {
+      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
+      const html = renderMail({
+        heading: "Order Placed with Credit",
+        subheading: "Your order has been placed successfully using your credit facility.",
+        highlight: `Order ID: ${doc._id}`,
+        blocks: [
+          { label: "Payment Method", value: "Retailer Credit" },
+          { label: "Total Paid", value: `₹${Number(payableTotal).toLocaleString("en-IN")}` },
+          { label: "Delivery Method", value: deliveryChannel === "LOCAL_DELIVERY" ? "Local Delivery" : "Delhivery Express" },
+          { label: "Status", value: "CONFIRMED" }
+        ],
+        items: doc.items.map(it => ({
+          name: it.name,
+          quantity: it.quantity,
+          price: it.price,
+          lineTotal: it.lineTotal
+        })),
+        totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total }
+      });
+      if (to) await sendEmail({ to, subject: `Credit Order Placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+    } catch {}
+  } else if (paymentMethod === "CASH") {
     notifyAdmin("new_offline_order", doc);
     try {
       const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
@@ -442,7 +563,6 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     razorpayOrderId: razorpayOrder?.id
   });
 });
-
 
 // Prepare Payment (no Order creation) - new flow
 router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) => {
@@ -491,6 +611,18 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
   const body = razorpay_order_id + "|" + razorpay_payment_id;
   const expectedSignature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(body.toString()).digest("hex");
   if (expectedSignature !== razorpay_signature) return res.status(400).json({ error: "invalid_signature" });
+
+  // If order was already pre-created, idempotently confirm it
+  const preExisting = await Order.findOne({ razorpayOrderId: razorpay_order_id });
+  if (preExisting) {
+    await confirmOrderPayment({
+      razorpayOrderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      paymentSignature: razorpay_signature,
+      source: "FRONTEND_VERIFY"
+    });
+    return res.json({ success: true, orderId: preExisting._id });
+  }
 
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
@@ -778,9 +910,9 @@ router.post("/verify-payment", async (req, res) => {
 
 // Manual Payment Submission (UPI/Bank) - create order pending approval
 router.post("/manual-submit", auth, requireRole("customer"), async (req, res) => {
-  const { items, amountPaid, utr, note, codAdvance20, couponCode } = req.body || {};
+  const { items, amountPaid, utr, note, codAdvance20, couponCode, deliveryChannel: requestedChannel } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
-  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address");
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address deliverySettings");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
   try {
@@ -791,6 +923,15 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
     const settings = await Settings.getDefaultSettings();
 
     const { discount: coupDiscount, finalAmount: payableTotal, couponId, coupon, commissionAmount } = await validateAndApplyCoupon(couponCode, totals.total, products);
+
+    // Resolve delivery channel
+    let deliveryChannel = "DELHIVERY";
+    const retailerDelivery = cust.deliverySettings || {};
+    if (requestedChannel === "LOCAL_DELIVERY" && retailerDelivery.localDeliveryEnabled) {
+      deliveryChannel = "LOCAL_DELIVERY";
+    } else if (retailerDelivery.localDeliveryEnabled && !retailerDelivery.delhiveryEnabled) {
+      deliveryChannel = "LOCAL_DELIVERY";
+    }
 
     const orderItems = totals.items.map((it) => {
       const p = products.find(x => x._id.toString() === it.product.toString());
@@ -836,6 +977,8 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
       status: "PENDING_ADMIN_APPROVAL",
       paymentMethod: codAdvance20 ? "COD_20" : "MANUAL",
       paymentStatus: "PAYMENT_SUBMITTED",
+      deliveryChannel,
+      localDelivery: deliveryChannel === "LOCAL_DELIVERY" ? { status: "PENDING" } : undefined,
       notes: note || "",
       manualPayment: { amountPaid: Number(amountPaid || 0), utr: String(utr || ""), note: String(note || "") },
       codAdvancePercent: codAdvance20 ? 20 : 0,
@@ -1318,6 +1461,146 @@ router.post("/:id/delhivery/standard-shipment", auth, requireRole("admin"), asyn
   } catch (err) {
     res.status(400).json({ error: err.message || "shipment_creation_failed" });
   }
+});
+
+// Admin: Switch Delivery Channel (DELHIVERY <-> LOCAL_DELIVERY)
+router.patch("/:id/delivery-channel", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { deliveryChannel, reason } = req.body || {};
+
+  if (!["DELHIVERY", "LOCAL_DELIVERY"].includes(deliveryChannel)) {
+    return res.status(400).json({ error: "invalid_delivery_channel", message: "Channel must be DELHIVERY or LOCAL_DELIVERY" });
+  }
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ error: "reason_required", message: "Audit reason is required to change delivery channel" });
+  }
+
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+
+  // Irreversible check:
+  if (order.status === "DELIVERED" || order.status === "CANCELLED" || order.status === "RETURNED") {
+    return res.status(400).json({
+      error: "irreversible_state",
+      message: `Cannot change delivery channel for order with status ${order.status}`
+    });
+  }
+  if (order.shipping?.waybill && order.status === "SHIPPED") {
+    return res.status(400).json({
+      error: "already_shipped",
+      message: "Cannot change delivery channel after parcel is shipped with Delhivery"
+    });
+  }
+
+  const prevChannel = order.deliveryChannel || "DELHIVERY";
+  if (prevChannel === deliveryChannel) {
+    return res.json({ success: true, order, message: "Delivery channel is already set to this value" });
+  }
+
+  order.deliveryChannel = deliveryChannel;
+
+  if (deliveryChannel === "LOCAL_DELIVERY") {
+    order.localDelivery = order.localDelivery || {
+      status: "PENDING",
+      assignedPerson: "",
+      contactPhone: "",
+      trackingNumber: "",
+      notes: ""
+    };
+    // Clear un-dispatched Delhivery waybill
+    if (order.shipping?.waybill && order.status !== "SHIPPED") {
+      order.shipping.waybill = "";
+      order.shipping.status = "";
+      order.shipping.trackingUrl = "";
+    }
+  } else if (deliveryChannel === "DELHIVERY") {
+    if (order.status === "CONFIRMED") {
+      try {
+        await tryCreateDelhiveryShipment(order);
+      } catch (err) {
+        console.error("Delhivery trigger on channel switch failed:", err);
+      }
+    }
+  }
+
+  await order.save();
+
+  try {
+    await AuditLog.create({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      type: "DELIVERY_CHANNEL_UPDATE",
+      entityType: "ORDER",
+      entityId: order._id.toString(),
+      note: `Delivery channel changed from ${prevChannel} to ${deliveryChannel}. Reason: ${reason.trim()}`,
+      before: { deliveryChannel: prevChannel },
+      after: { deliveryChannel: order.deliveryChannel }
+    });
+  } catch (err) {
+    console.error("Audit log creation error:", err);
+  }
+
+  res.json({ success: true, order });
+});
+
+// Admin: Manage Local Delivery details and fulfillment
+router.patch("/:id/local-delivery", auth, requireRole("admin"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { status, assignedPerson, contactPhone, trackingNumber, notes, dispatchedAt, deliveredAt } = req.body || {};
+
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+
+  if (order.deliveryChannel !== "LOCAL_DELIVERY") {
+    return res.status(400).json({
+      error: "not_local_delivery",
+      message: "This order is not currently assigned to Local Delivery"
+    });
+  }
+
+  order.localDelivery = order.localDelivery || {};
+  const prevLocalStatus = order.localDelivery.status;
+
+  if (status !== undefined) order.localDelivery.status = status;
+  if (assignedPerson !== undefined) order.localDelivery.assignedPerson = String(assignedPerson).trim();
+  if (contactPhone !== undefined) order.localDelivery.contactPhone = String(contactPhone).trim();
+  if (trackingNumber !== undefined) order.localDelivery.trackingNumber = String(trackingNumber).trim();
+  if (notes !== undefined) order.localDelivery.notes = String(notes).trim();
+  if (dispatchedAt) order.localDelivery.dispatchedAt = new Date(dispatchedAt);
+  if (deliveredAt) order.localDelivery.deliveredAt = new Date(deliveredAt);
+
+  // Sync main order status based on local delivery progress
+  if (status === "OUT_FOR_DELIVERY" || status === "ASSIGNED") {
+    order.status = "OUT_FOR_DELIVERY";
+    if (!order.localDelivery.dispatchedAt) order.localDelivery.dispatchedAt = new Date();
+  } else if (status === "DELIVERED") {
+    order.status = "DELIVERED";
+    order.localDelivery.deliveredAt = order.localDelivery.deliveredAt || new Date();
+    if (order.partnerCommission) {
+      order.partnerCommission.status = "SETTLED";
+    }
+  } else if (status === "CANCELLED") {
+    order.status = "CANCELLED";
+  }
+
+  await order.save();
+
+  try {
+    await AuditLog.create({
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      type: "LOCAL_DELIVERY_UPDATE",
+      entityType: "ORDER",
+      entityId: order._id.toString(),
+      note: `Local delivery fulfillment updated to ${order.localDelivery.status}`,
+      before: { localDeliveryStatus: prevLocalStatus },
+      after: { localDelivery: order.localDelivery, orderStatus: order.status }
+    });
+  } catch (err) {
+    console.error("Audit log error:", err);
+  }
+
+  res.json({ success: true, order });
 });
 
 export default router;

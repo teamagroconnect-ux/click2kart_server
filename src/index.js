@@ -34,19 +34,29 @@ import offerRoutes from "./routes/offerRoutes.js";
 import brandRoutes from "./routes/brandRoutes.js";
 import subCategoryRoutes from "./routes/subCategoryRoutes.js";
 import supportTicketRoutes from "./routes/supportTicketRoutes.js";
+import creditRoutes from "./routes/creditRoutes.js";
 
 dotenv.config();
 
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "50mb" })); // Increase limit for Excel data
+app.use(
+  express.json({
+    limit: "50mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    }
+  })
+); // Increase limit for Excel data and capture rawBody for webhooks
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(morgan("dev"));
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
 });
+
+app.use("/api/credit", creditRoutes);
 
 app.use("/api/products", productRoutes);
 app.use("/api/auth", authRoutes);

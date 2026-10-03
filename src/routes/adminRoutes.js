@@ -377,7 +377,8 @@ router.put("/customers/:id", auth, requirePermission("customers"), async (req, r
     approvalStatus,
     kyc,
     partnerInviteCode,
-    partnerUpdate
+    partnerUpdate,
+    deliverySettings
   } = req.body || {};
 
   if (name !== undefined) user.name = String(name).trim();
@@ -385,6 +386,16 @@ router.put("/customers/:id", auth, requirePermission("customers"), async (req, r
   if (phone !== undefined) user.phone = String(phone).trim();
   if (isActive !== undefined) user.isActive = Boolean(isActive);
   if (approvalStatus !== undefined) user.approvalStatus = String(approvalStatus).trim();
+
+  if (deliverySettings && typeof deliverySettings === 'object') {
+    user.deliverySettings = user.deliverySettings || {};
+    if (deliverySettings.delhiveryEnabled !== undefined) {
+      user.deliverySettings.delhiveryEnabled = Boolean(deliverySettings.delhiveryEnabled);
+    }
+    if (deliverySettings.localDeliveryEnabled !== undefined) {
+      user.deliverySettings.localDeliveryEnabled = Boolean(deliverySettings.localDeliveryEnabled);
+    }
+  }
 
   if (kyc && typeof kyc === 'object') {
     const kycFields = [

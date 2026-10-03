@@ -19,7 +19,9 @@ router.get("/me", auth, async (req, res) => {
     });
   }
 
-  const user = await Customer.findById(req.user.id).select("name email phone whatsappNumber address isKycComplete kyc dob");
+  const user = await Customer.findById(req.user.id).select(
+    "name email phone whatsappNumber address isKycComplete kyc dob isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings"
+  );
   if (!user) return res.status(404).json({ error: "not_found" });
   res.json({
     id: user._id.toString(),
@@ -31,7 +33,13 @@ router.get("/me", auth, async (req, res) => {
     isKycComplete: !!user.isKycComplete,
     kyc: user.kyc || {},
     dob: user.dob,
-    role: "customer"
+    role: "customer",
+    isCreditEnabled: !!user.isCreditEnabled,
+    creditLimit: user.creditLimit || 0,
+    availableCredit: user.availableCredit || 0,
+    usedCredit: user.usedCredit || 0,
+    outstandingBalance: user.outstandingBalance || 0,
+    deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
   });
 });
 
