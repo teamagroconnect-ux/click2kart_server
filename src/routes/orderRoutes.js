@@ -18,6 +18,7 @@ import axios from "axios";
 import Settings from "../models/Settings.js";
 import { confirmOrderPayment } from "../services/orderPayment.service.js";
 import { deductCreditForOrder, reverseCreditForOrder } from "../services/credit.service.js";
+import { syncActiveDelhiveryOrders } from "../services/delhiverySync.service.js";
 
 const isAdmin = (req) => {
   try {
@@ -1728,6 +1729,66 @@ router.patch("/:id/local-delivery", auth, requireRole("admin"), async (req, res)
   }
 
   res.json({ success: true, order });
+});
+
+// Admin Manual Sync active orders with Delhivery
+router.post("/sync-delhivery", auth, requirePermission("orders"), async (req, res) => {
+  try {
+    const result = await syncActiveDelhiveryOrders();
+    res.json({
+      success: true,
+      message: `Checked ${result.totalActive} active shipments. Updated ${result.updatedCount} order status(es).`,
+      ...result
+    });
+  } catch (err) {
+    console.error("POST /sync-delhivery error:", err);
+    res.status(500).json({ error: "sync_failed", message: err.message });
+  }
+});
+
+// Customer Retry / Complete Payment for existing unpaid order
+router.post("/:id/retry-payment", auth, requireRole("customer"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: "order_not_found" });
+
+    const cust = await Customer.findById(req.user.id);
+    const isOwner = (cust.phone && order.customer.phone === cust.phone) || (cust.email && order.customer.email === cust.email);
+    if (!isOwner) return res.status(403).json({ error: "unauthorized" });
+
+    if (order.status === "CANCELLED") return res.status(400).json({ error: "order_cancelled", message: "Cannot pay for a cancelled order" });
+    if (order.paymentStatus === "PAID") return res.status(400).json({ error: "already_paid", message: "This order is already marked as paid" });
+
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(500).json({ error: "razorpay_not_configured" });
+    }
+
+    const payableTotal = order.paymentMethod === "COD_20" ? (order.totalEstimate * 0.2) : order.totalEstimate;
+    const amountPaise = Math.round(payableTotal * 100);
+
+    const rp = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: "INR",
+      receipt: `retry_${order._id.toString().slice(-8)}_${Date.now()}`
+    });
+
+    order.razorpayOrderId = rp.id;
+    await order.save();
+
+    res.json({
+      success: true,
+      orderId: order._id,
+      razorpayOrderId: rp.id,
+      amountPaise: rp.amount,
+      keyId: process.env.RAZORPAY_KEY_ID,
+      totalEstimate: order.totalEstimate,
+      payableAmount: payableTotal
+    });
+  } catch (err) {
+    console.error("POST /:id/retry-payment error:", err);
+    res.status(500).json({ error: "payment_initiation_failed", message: err.message });
+  }
 });
 
 export default router;

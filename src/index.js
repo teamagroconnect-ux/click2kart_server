@@ -6,6 +6,7 @@ import { connectIfConfigured } from "./lib/db.js";
 import { connectRedis } from "./lib/redis.js";
 import { warmCache } from "./lib/cacheWarmer.js";
 import { startBirthdayScheduler } from "./lib/birthdayScheduler.js";
+import { startOrderSyncScheduler } from "./lib/orderSyncScheduler.js";
 import http from "http";
 import { initSocket } from "./lib/socket.js";
 import Admin from "./models/Admin.js";
@@ -111,6 +112,7 @@ const start = async () => {
 
   await ensureDefaultAdmin();
   startBirthdayScheduler();
+  startOrderSyncScheduler();
   const server = http.createServer(app);
   initSocket(server);
   server.listen(PORT, () => {

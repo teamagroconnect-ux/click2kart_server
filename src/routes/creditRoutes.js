@@ -144,6 +144,45 @@ router.post("/me/repay/razorpay-init", auth, requireRole("customer"), async (req
 });
 
 /**
+ * Retry an existing PAYMENT_PENDING repayment request
+ */
+router.post("/me/repay/retry/:repaymentId", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const repayment = await CreditRepayment.findById(req.params.repaymentId);
+    if (!repayment) return res.status(404).json({ error: "repayment_not_found" });
+    if (repayment.retailerId.toString() !== req.user.id) return res.status(403).json({ error: "unauthorized" });
+    if (repayment.status !== "PAYMENT_PENDING") {
+      return res.status(400).json({ error: "not_pending", message: `Cannot retry repayment with status '${repayment.status}'` });
+    }
+
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(500).json({ error: "razorpay_not_configured" });
+    }
+
+    const amountPaise = Math.round(repayment.amount * 100);
+    const rzpOrder = await razorpay.orders.create({
+      amount: amountPaise,
+      currency: "INR",
+      receipt: `retry_repay_${Date.now()}`
+    });
+
+    repayment.razorpayOrderId = rzpOrder.id;
+    await repayment.save();
+
+    res.json({
+      success: true,
+      repaymentId: repayment._id,
+      razorpayOrderId: rzpOrder.id,
+      amountPaise: rzpOrder.amount,
+      keyId: process.env.RAZORPAY_KEY_ID
+    });
+  } catch (err) {
+    console.error("POST /me/repay/retry error:", err);
+    res.status(500).json({ error: "repayment_retry_failed", message: err.message });
+  }
+});
+
+/**
  * Verify Razorpay payment and complete repayment
  */
 router.post("/me/repay/razorpay-verify", auth, requireRole("customer"), async (req, res) => {
