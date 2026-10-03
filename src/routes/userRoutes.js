@@ -73,13 +73,13 @@ router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
 });
 
 router.put("/profile", auth, requireRole("customer"), async (req, res) => {
-  const { address, name, phone, dob, whatsappNumber } = req.body;
+  const { address, name, dob, whatsappNumber } = req.body;
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
   if (address !== undefined) user.address = address;
   if (typeof name === "string") user.name = name.trim();
-  if (typeof phone === "string") user.phone = phone.trim();
+  // Phone and email are strictly locked for customer accounts; updates require admin support ticket
   if (dob) user.dob = new Date(dob);
   if (typeof whatsappNumber === "string") user.whatsappNumber = whatsappNumber.trim();
 

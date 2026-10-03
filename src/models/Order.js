@@ -52,6 +52,11 @@ const orderSchema = new mongoose.Schema(
       enum: ["NEW", "PENDING_PAYMENT", "PENDING_CASH_APPROVAL", "PENDING_ADMIN_APPROVAL", "CONFIRMED", "PROCESSING", "PACKED", "SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"], 
       default: "NEW" 
     },
+    cancellation: {
+      cancelledBy: { type: String, default: "" },
+      reason: { type: String, default: "" },
+      cancelledAt: { type: Date }
+    },
     notes: { type: String, default: "" },
     manualPayment: {
       amountPaid: { type: Number, default: 0 },

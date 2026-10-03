@@ -1293,7 +1293,7 @@ router.get("/:id", auth, requirePermission("orders"), async (req, res) => {
 // Admin update status/LRN
 router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
-  const { status, lrn } = req.body || {};
+  const { status, lrn, reason } = req.body || {};
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ error: "not_found" });
 
@@ -1302,12 +1302,15 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
   }
 
   if (status) {
-    const allowed = new Set(["NEW", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"]);
+    const allowed = new Set(["NEW", "CONFIRMED", "PROCESSING", "PACKED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED", "FULFILLED"]);
     if (!allowed.has(status)) return res.status(400).json({ error: "invalid_status" });
     const okTransitions = {
-      NEW: new Set(["CONFIRMED", "CANCELLED"]),
+      NEW: new Set(["CONFIRMED", "PROCESSING", "CANCELLED"]),
       PENDING_CASH_APPROVAL: new Set(["CONFIRMED", "CANCELLED"]),
-      CONFIRMED: new Set(["SHIPPED", "CANCELLED"]),
+      PENDING_ADMIN_APPROVAL: new Set(["CONFIRMED", "CANCELLED"]),
+      CONFIRMED: new Set(["PROCESSING", "PACKED", "SHIPPED", "CANCELLED"]),
+      PROCESSING: new Set(["PACKED", "SHIPPED", "CANCELLED"]),
+      PACKED: new Set(["SHIPPED", "CANCELLED"]),
       SHIPPED: new Set(["DELIVERED", "RETURNED"]),
       DELIVERED: new Set(["FULFILLED", "RETURNED"]),
       CANCELLED: new Set([]),
@@ -1317,6 +1320,51 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
     const curr = order.status;
     if (!okTransitions[curr] || !okTransitions[curr].has(status)) return res.status(400).json({ error: "invalid_transition" });
     order.status = status;
+
+    if (status === "CANCELLED") {
+      order.cancellation = {
+        cancelledBy: "Admin",
+        reason: reason || "Cancelled by administrator",
+        cancelledAt: new Date()
+      };
+
+      // If paid via CREDIT, auto-refund/rollback credit
+      if (order.paymentMethod === "CREDIT") {
+        try {
+          const cust = await Customer.findOne({ $or: [{ phone: order.customer.phone }, { email: order.customer.email }] });
+          if (cust) {
+            await reverseCreditForOrder({
+              customerId: cust._id,
+              orderId: order._id,
+              orderTotal: order.totalEstimate,
+              reason: `Order cancelled by Admin: ${reason || "Admin Cancellation"}`
+            });
+          }
+        } catch (revErr) {
+          console.error("Credit reversal on admin cancel failed:", revErr);
+        }
+      }
+
+      // Restore product stock
+      for (const item of order.items) {
+        try {
+          if (item.variantSku) {
+            await Product.updateOne(
+              { _id: item.product, "variants.sku": item.variantSku },
+              { $inc: { stock: item.quantity, "variants.$.stock": item.quantity } }
+            );
+          } else {
+            await Product.updateOne(
+              { _id: item.product },
+              { $inc: { stock: item.quantity } }
+            );
+          }
+        } catch (stockErr) {
+          console.error("Failed to restore stock on cancel:", stockErr);
+        }
+      }
+    }
+
     try {
       await AuditLog.create({ actorId: req.user?.id || "", actorRole: req.user?.role || "", type: "ORDER_STATUS", entityType: "ORDER", entityId: order._id.toString(), note: `Status ${curr} → ${status}` });
     } catch {}
@@ -1325,6 +1373,85 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
   const updated = await order.save();
   if (!updated) return res.status(404).json({ error: "not_found" });
   res.json(updated);
+});
+
+// Customer cancel order endpoint
+router.post("/:id/cancel", auth, requireRole("customer"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { reason } = req.body || {};
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ error: "not_found" });
+
+  const cust = await Customer.findById(req.user.id).select("phone email name");
+  if (!cust) return res.status(404).json({ error: "customer_not_found" });
+
+  // Ownership verification
+  const isOwner = (cust.phone && order.customer.phone === cust.phone) || (cust.email && order.customer.email === cust.email);
+  if (!isOwner) return res.status(403).json({ error: "forbidden", message: "You can only cancel your own orders" });
+
+  // Eligibility verification: cannot cancel if already dispatched/delivered
+  const nonCancellable = ["SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED", "FULFILLED", "CANCELLED", "RETURNED"];
+  if (nonCancellable.includes(order.status)) {
+    return res.status(400).json({
+      error: "order_not_cancellable",
+      message: `Orders with status '${order.status}' cannot be cancelled directly. Please contact support.`
+    });
+  }
+
+  const prevStatus = order.status;
+  order.status = "CANCELLED";
+  order.cancellation = {
+    cancelledBy: "Retailer",
+    reason: reason || "Cancelled by retailer request",
+    cancelledAt: new Date()
+  };
+
+  // If paid via CREDIT, auto-refund/rollback credit
+  if (order.paymentMethod === "CREDIT") {
+    try {
+      await reverseCreditForOrder({
+        customerId: cust._id,
+        orderId: order._id,
+        orderTotal: order.totalEstimate,
+        reason: `Order cancelled by Retailer: ${reason || "Retailer Cancellation"}`
+      });
+    } catch (revErr) {
+      console.error("Credit reversal on customer cancel failed:", revErr);
+    }
+  }
+
+  // Restore inventory/stock
+  for (const item of order.items) {
+    try {
+      if (item.variantSku) {
+        await Product.updateOne(
+          { _id: item.product, "variants.sku": item.variantSku },
+          { $inc: { stock: item.quantity, "variants.$.stock": item.quantity } }
+        );
+      } else {
+        await Product.updateOne(
+          { _id: item.product },
+          { $inc: { stock: item.quantity } }
+        );
+      }
+    } catch (stockErr) {
+      console.error("Failed to restore stock on cancel:", stockErr);
+    }
+  }
+
+  try {
+    await AuditLog.create({
+      actorId: cust._id.toString(),
+      actorRole: "customer",
+      type: "ORDER_STATUS",
+      entityType: "ORDER",
+      entityId: order._id.toString(),
+      note: `Retailer cancelled order (${prevStatus} → CANCELLED). Reason: ${order.cancellation.reason}`
+    });
+  } catch {}
+
+  await order.save();
+  res.json({ success: true, message: "Order cancelled successfully", order });
 });
 
 // Customer delivery feedback (rating only after order fulfilled)

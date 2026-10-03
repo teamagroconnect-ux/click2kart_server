@@ -183,9 +183,16 @@ router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req,
       id: user._id.toString(), 
       name: user.name, 
       email: user.email, 
+      phone: user.phone,
       role: "customer", 
       isKycComplete: !!user.isKycComplete,
-      kyc: user.kyc || {}
+      kyc: user.kyc || {},
+      isCreditEnabled: !!user.isCreditEnabled,
+      creditLimit: user.creditLimit || 0,
+      availableCredit: user.availableCredit || 0,
+      usedCredit: user.usedCredit || 0,
+      outstandingBalance: user.outstandingBalance || 0,
+      deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
     }
   });
 });
@@ -279,9 +286,16 @@ router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 60
       id: user._id.toString(), 
       name: user.name, 
       email: user.email, 
+      phone: user.phone,
       role: "customer", 
       isKycComplete: !!user.isKycComplete,
-      kyc: user.kyc || {}
+      kyc: user.kyc || {},
+      isCreditEnabled: !!user.isCreditEnabled,
+      creditLimit: user.creditLimit || 0,
+      availableCredit: user.availableCredit || 0,
+      usedCredit: user.usedCredit || 0,
+      outstandingBalance: user.outstandingBalance || 0,
+      deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
     }
   });
 });

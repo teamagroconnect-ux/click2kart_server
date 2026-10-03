@@ -32,9 +32,23 @@ const findVariant = (product, variantSku) => {
 
 const serializeCart = async (cart) => {
   if (!cart) return { items: [] };
-  await cart.populate("items.product", "name price gst images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp packSize");
+  await cart.populate("items.product", "name price gst images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp packSize isActive");
   return {
     items: cart.items.map((it) => {
+      if (!it.product) {
+        return {
+          productId: String(it._id || "unknown"),
+          name: "Item No Longer Available",
+          quantity: it.quantity,
+          price: 0,
+          gst: 0,
+          stock: 0,
+          isActive: false,
+          isRemoved: true,
+          isAvailable: false
+        };
+      }
+      const prodActive = it.product.isActive !== false;
       const base = {
         productId: it.product._id.toString(),
         quantity: it.quantity,
@@ -47,6 +61,8 @@ const serializeCart = async (cart) => {
       if (it.variantSku) {
         const v = (it.product.variants || []).find(v => v.sku === it.variantSku);
         if (v) {
+          const varStock = v.stock ?? 0;
+          const varActive = prodActive && v.isActive !== false;
           return {
             ...base,
             variantSku: it.variantSku,
@@ -54,21 +70,26 @@ const serializeCart = async (cart) => {
             attributes: v.attributes,
             price: v.price ?? it.product.price,
             gst: it.product.gst || 0,
-            stock: v.stock ?? 0,
+            stock: varStock,
             sku: v.sku,
             image: (v.images?.[0]?.url || it.product.images?.[0]?.url || ""),
-            minOrderQty: getEffectiveMoq(it.product)
+            minOrderQty: getEffectiveMoq(it.product),
+            isActive: varActive,
+            isAvailable: varActive && varStock > 0
           };
         }
       }
+      const pStock = it.product.stock ?? 0;
       return {
         ...base,
         name: it.product.name,
         price: it.product.price,
         gst: it.product.gst || 0,
-        stock: it.product.stock,
+        stock: pStock,
         image: it.product.images?.[0]?.url || "",
-        minOrderQty: getEffectiveMoq(it.product)
+        minOrderQty: getEffectiveMoq(it.product),
+        isActive: prodActive,
+        isAvailable: prodActive && pStock > 0
       };
     })
   };
