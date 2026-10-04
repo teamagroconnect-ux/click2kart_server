@@ -9,6 +9,7 @@ import PartnerPayout from "../models/PartnerPayout.js";
 import Partner from "../models/Partner.js";
 import Customer from "../models/Customer.js";
 import OTP from "../models/OTP.js";
+import Settings from "../models/Settings.js";
 import { sendOTP, sendEmail } from "../lib/mailer.js";
 import { getOrSetCache, getCacheVersion, bumpCacheVersion } from "../lib/redis.js";
 import { rateLimit } from "../middleware/rateLimit.js";
@@ -500,6 +501,36 @@ router.post("/partner/reset-password", rateLimit("partner-reset-password", 5, 60
   await OTP.deleteOne({ _id: record._id });
 
   res.json({ message: "password_reset_success" });
+});
+
+/**
+ * GET /api/public/bank-details
+ * Exposes company bank & QR payment information ONLY IF enabled & configured by admin.
+ */
+router.get("/bank-details", async (req, res) => {
+  try {
+    const settings = await Settings.getDefaultSettings();
+    const bank = settings.bankDetails || {};
+    const isConfigured = Boolean(
+      bank.enabled &&
+      (bank.accountNumber || bank.upiId)
+    );
+    res.json({
+      enabled: isConfigured,
+      bankDetails: isConfigured ? {
+        bankName: bank.bankName || "",
+        accountHolder: bank.accountHolder || "",
+        accountNumber: bank.accountNumber || "",
+        ifscCode: bank.ifscCode || "",
+        branch: bank.branch || "",
+        upiId: bank.upiId || "",
+        qrCodeUrl: bank.qrCodeUrl || ""
+      } : null
+    });
+  } catch (err) {
+    console.error("GET /api/public/bank-details error:", err);
+    res.status(500).json({ error: "failed_to_fetch_bank_details" });
+  }
 });
 
 export default router;

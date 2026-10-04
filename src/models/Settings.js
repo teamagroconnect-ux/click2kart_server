@@ -30,8 +30,18 @@ const settingsSchema = new mongoose.Schema(
     supportPhone: { type: String, default: "" },
     supportEmail: { type: String, default: "" },
     returnPolicy: { type: String, default: "" },
-    termsOfService: { type: String, default: "" },
-    privacyPolicy: { type: String, default: "" }
+    privacyPolicy: { type: String, default: "" },
+    // Bank & QR Payment configuration
+    bankDetails: {
+      enabled: { type: Boolean, default: false },
+      bankName: { type: String, default: "" },
+      accountHolder: { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+      ifscCode: { type: String, default: "" },
+      branch: { type: String, default: "" },
+      upiId: { type: String, default: "" },
+      qrCodeUrl: { type: String, default: "" }
+    }
   },
   { timestamps: true }
 );

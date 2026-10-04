@@ -418,7 +418,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
 
   const doc = await Order.create({
     _id: newOrderId,
-    customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
+    customer: { id: cust._id, name: cust.name, phone: cust.phone, email: cust.email || "" },
     shippingAddress: {
       line1: cust.kyc?.addressLine1 || cust.address || "",
       line2: cust.kyc?.addressLine2 || "",
@@ -679,7 +679,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
     };
 
     const doc = await Order.create({
-      customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
+      customer: { id: cust._id, name: cust.name, phone: cust.phone, email: cust.email || "" },
       shippingAddress: {
         line1: cust.kyc?.addressLine1 || cust.address || "",
         line2: cust.kyc?.addressLine2 || "",
@@ -953,7 +953,7 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
     };
 
     const doc = await Order.create({
-      customer: { name: cust.name, phone: cust.phone, email: cust.email || "" },
+      customer: { id: cust._id, name: cust.name, phone: cust.phone, email: cust.email || "" },
       shippingAddress: {
         line1: cust.kyc?.addressLine1 || cust.address || "",
         line2: cust.kyc?.addressLine2 || "",

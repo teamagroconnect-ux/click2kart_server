@@ -223,8 +223,15 @@ router.put("/settings", auth, requireRole("admin"), async (req, res) => {
     
     // Update all provided fields
     Object.keys(req.body).forEach(key => {
-      if (key in settings.schema.paths) {
-        settings[key] = req.body[key];
+      if (key in settings.schema.paths || key === "bankDetails") {
+        if (key === "bankDetails" && typeof req.body.bankDetails === "object") {
+          settings.bankDetails = {
+            ...(settings.bankDetails?.toObject?.() || settings.bankDetails || {}),
+            ...req.body.bankDetails
+          };
+        } else {
+          settings[key] = req.body[key];
+        }
       }
     });
     
@@ -323,12 +330,18 @@ router.get("/customers", auth, requirePermission("customers"), async (req, res) 
 
 router.get("/customers/:id", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
-  const user = await Customer.findById(id).select("-password");
+  let user = null;
+  if (mongoose.isValidObjectId(id)) {
+    user = await Customer.findById(id).select("-password");
+  }
+  if (!user) {
+    user = await Customer.findOne({ phone: id }).select("-password");
+  }
   if (!user) return res.status(404).json({ error: "not_found" });
   const Order = (await import("../models/Order.js")).default;
   const Bill = (await import("../models/Bill.js")).default;
   const orders = await Order.find({ "customer.phone": user.phone }).sort({ createdAt: -1 }).limit(10);
-  const bills = await Bill.find({ customer: id }).sort({ createdAt: -1 }).limit(10);
+  const bills = await Bill.find({ customer: user._id }).sort({ createdAt: -1 }).limit(10);
   
   let partner = null;
   if (user.kyc?.partnerInviteCode) {

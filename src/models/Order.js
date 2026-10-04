@@ -20,6 +20,7 @@ const orderSchema = new mongoose.Schema(
     type: { type: String, default: "ENQUIRY" },
     billId: { type: mongoose.Schema.Types.ObjectId, ref: "Bill" },
     customer: {
+      id: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
       name: { type: String, required: true },
       phone: { type: String, required: true },
       email: { type: String, default: "" }
