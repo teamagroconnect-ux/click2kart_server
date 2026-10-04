@@ -14,6 +14,7 @@ import {
   toggleRetailerCredit
 } from "../services/credit.service.js";
 import { runReconciliation } from "../services/reconciliation.service.js";
+import { sendEmail, renderMail } from "../lib/mailer.js";
 
 const router = express.Router();
 
@@ -562,6 +563,99 @@ router.post("/admin/reconcile", auth, requirePermission("orders"), async (req, r
   } catch (err) {
     console.error("POST /admin/reconcile error:", err);
     res.status(500).json({ error: "reconciliation_failed", message: err.message });
+  }
+});
+
+/**
+ * Notify all credit-enabled retailers who have outstanding credit dues
+ * Optional: body { retailerId } to notify a specific retailer
+ */
+router.post("/admin/notify-outstanding", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { retailerId } = req.body || {};
+    const query = {
+      isCreditEnabled: true,
+      outstandingBalance: { $gt: 0 }
+    };
+    if (retailerId) {
+      if (!mongoose.isValidObjectId(retailerId)) {
+        return res.status(400).json({ error: "invalid_retailer_id" });
+      }
+      query._id = retailerId;
+    }
+
+    const debtors = await Customer.find(query).select(
+      "name email phone outstandingBalance creditLimit availableCredit"
+    );
+
+    if (!debtors || debtors.length === 0) {
+      return res.json({
+        success: true,
+        totalDebtors: 0,
+        sentCount: 0,
+        failedCount: 0,
+        message: "No retailers with outstanding balance found."
+      });
+    }
+
+    const company = process.env.COMPANY_NAME || "Click2Kart";
+    const portalUrl = `${(process.env.CLIENT_URL && process.env.CLIENT_URL.replace(/\/$/, "")) || "https://click2kart.net"}/profile`;
+    let sentCount = 0;
+    let failedCount = 0;
+
+    for (const retailer of debtors) {
+      if (!retailer.email) {
+        failedCount++;
+        continue;
+      }
+      try {
+        const outAmount = Number(retailer.outstandingBalance || 0);
+        const limit = Number(retailer.creditLimit || 0);
+        const avail = Number(retailer.availableCredit || 0);
+
+        const html = renderMail({
+          heading: "Credit Statement & Repayment Notice",
+          subheading: `Dear ${retailer.name || "Valued Retailer"}, this is an official reminder regarding your active wholesale credit line with ${company}.`,
+          highlight: `Total Outstanding Due: ₹${outAmount.toLocaleString("en-IN")}`,
+          blocks: [
+            { label: "Account Holder", value: retailer.name || "Retailer" },
+            { label: "Registered Phone", value: retailer.phone || "—" },
+            { label: "Assigned Credit Limit", value: `₹${limit.toLocaleString("en-IN")}` },
+            { label: "Current Outstanding", value: `₹${outAmount.toLocaleString("en-IN")}` },
+            { label: "Available Credit", value: `₹${avail.toLocaleString("en-IN")}` },
+            {
+              label: "Important Notice",
+              value: "Please clear your outstanding balance promptly via Razorpay or Direct Bank Transfer to maintain an uninterrupted credit facility, prevent account suspension, and avoid late interest charges."
+            },
+            {
+              label: "Repay Online",
+              value: `<a href="${portalUrl}" style="display:inline-block;padding:10px 20px;background:#7c3aed;color:#ffffff;text-decoration:none;border-radius:12px;font-weight:800;font-size:12px;">Go to Retailer Repayment Portal →</a>`
+            }
+          ]
+        });
+
+        await sendEmail({
+          to: retailer.email,
+          subject: `Payment Reminder: Outstanding Credit Balance Due - ${company}`,
+          html
+        });
+        sentCount++;
+      } catch (mailErr) {
+        console.error(`Failed to send credit reminder to ${retailer.email}:`, mailErr);
+        failedCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      totalDebtors: debtors.length,
+      sentCount,
+      failedCount,
+      message: `Notifications sent to ${sentCount} retailer(s)${failedCount > 0 ? `, ${failedCount} could not be sent (missing or invalid email)` : ""}.`
+    });
+  } catch (err) {
+    console.error("POST /admin/notify-outstanding error:", err);
+    res.status(500).json({ error: "failed_to_notify_outstanding", message: err.message });
   }
 });
 

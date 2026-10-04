@@ -80,7 +80,7 @@ export const syncActiveDelhiveryOrders = async () => {
         order.shipping = order.shipping || {};
         order.shipping.status = targetShippingStatus;
         if (!order.shipping.trackingUrl) {
-          order.shipping.trackingUrl = `https://track.delhivery.com/track/package/${waybill}`;
+          order.shipping.trackingUrl = `https://www.delhivery.com/track/package/${waybill}`;
         }
         await order.save();
         updatedCount++;

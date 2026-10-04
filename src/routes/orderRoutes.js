@@ -188,7 +188,7 @@ const tryCreateDelhiveryShipment = async (order) => {
         provider: "DELHIVERY",
         waybill: String(wbFinal),
         status: pkg?.status?.status || pkg?.status || "CREATED",
-        trackingUrl: `https://track.delhivery.com/track/package/${wbFinal}`
+        trackingUrl: `https://www.delhivery.com/track/package/${wbFinal}`
       };
       order.shippingAddress = addr;
       // Update pickup info from settings
