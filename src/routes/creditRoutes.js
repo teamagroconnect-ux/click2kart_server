@@ -625,7 +625,7 @@ router.post("/admin/notify-outstanding", auth, requirePermission("customers"), a
             { label: "Available Credit", value: `₹${avail.toLocaleString("en-IN")}` },
             {
               label: "Important Notice",
-              value: "Please clear your outstanding balance promptly via Razorpay or Direct Bank Transfer to maintain an uninterrupted credit facility, prevent account suspension, and avoid late interest charges."
+              value: "Please clear your outstanding balance promptly to maintain an uninterrupted credit facility and avoid account suspension or late charges."
             },
             {
               label: "Repay Online",
