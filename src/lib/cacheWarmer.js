@@ -1,17 +1,12 @@
 import Category from "../models/Category.js";
 import Brand from "../models/Brand.js";
-import { getOrSetCache, REDIS_ENABLED } from "./redis.js";
+import { getOrSetCache } from "./redis.js";
 
 /**
  * Cache Warming - Preload frequently accessed data
- * When Redis is disabled, this is safely bypassed.
+ * This ensures the first user gets a lightning fast response.
  */
 export const warmCache = async () => {
-  if (!REDIS_ENABLED) {
-    console.log("ℹ️ Cache warming skipped (Redis caching disabled - all queries served directly from database)");
-    return;
-  }
-
   console.log("🔥 Starting Cache Warming...");
   try {
     // 1. Warm Categories

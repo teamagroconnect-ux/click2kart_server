@@ -15,7 +15,10 @@ import { getOrSetCache, delCache, getCacheVersion, bumpCacheVersion } from "../l
 
 const router = express.Router();
 
-
+// 30s in-memory cache for recommend endpoint
+const _recCache = new Map(); // key -> { expire:number, data:any }
+const _now = () => Date.now();
+const _mkKey = (id, cart) => `${id}|${(cart||[]).join(",")}`;
 
 const isViewerAuthorized = (req) => {
   try {
@@ -349,6 +352,12 @@ router.get("/recommend", async (req, res) => {
     .map(s => s.trim())
     .filter(Boolean)
     .filter(x => mongoose.isValidObjectId(x));
+  const key = _mkKey(id, excludeIds);
+  const cached = _recCache.get(key);
+  if (cached && cached.expire > _now()) {
+    const canViewPrice = isViewerAuthorized(req);
+    return res.json({ items: (cached.data || []).map((it) => sanitizeProduct(it, canViewPrice)) });
+  }
   const filter = {
     isActive: true,
     category: base.category,
@@ -362,6 +371,7 @@ router.get("/recommend", async (req, res) => {
     return { doc: c, margin };
   }).sort((a, b) => (b.margin - a.margin));
   const pick = withMargin.length ? [withMargin[0].doc] : [];
+  _recCache.set(key, { expire: _now() + 30_000, data: pick });
   const canViewPrice = isViewerAuthorized(req);
   res.json({ items: pick.map((it) => sanitizeProduct(it, canViewPrice)) });
 });

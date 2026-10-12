@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import Category from "../models/Category.js";
 import Brand from "../models/Brand.js";
-import Product from "../models/Product.js";
 import Coupon from "../models/Coupon.js";
 import Bill from "../models/Bill.js";
 import PartnerPayout from "../models/PartnerPayout.js";
@@ -135,84 +134,6 @@ router.get("/brands", async (req, res) => {
     return await Brand.find(filter).sort({ name: 1 });
   }, 86400); // 24 hours
   res.json(items);
-});
-
-// Public: Validate & sync cart items with live database (bypassing any cache)
-router.post("/cart/sync", async (req, res) => {
-  try {
-    const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
-    if (!rawItems.length) return res.json({ items: [] });
-
-    const validItems = rawItems.filter(it => mongoose.isValidObjectId(it.productId || it._id));
-    const productIds = [...new Set(validItems.map(it => String(it.productId || it._id)))];
-
-    const products = await Product.find({ _id: { $in: productIds } })
-      .select("name price gst images stock variants minOrderQty bulkDiscountQuantity bulkDiscountPriceReduction bulkTiers mrp packSize isActive")
-      .lean();
-
-    const productMap = new Map(products.map(p => [String(p._id), p]));
-
-    const synced = validItems.map(it => {
-      const pid = String(it.productId || it._id);
-      const prod = productMap.get(pid);
-      if (!prod || prod.isActive === false) {
-        return {
-          productId: pid,
-          variantSku: it.variantSku || "",
-          name: it.name || "Unavailable Product",
-          quantity: Math.max(1, Number(it.quantity || 1)),
-          price: Number(it.price || 0),
-          stock: 0,
-          isActive: false,
-          isAvailable: false,
-          isRemoved: true
-        };
-      }
-
-      const getPackSize = (p) => Math.max(1, Math.round(Number(p?.packSize || 1)));
-      const pack = getPackSize(prod);
-      const moq = Math.max(1, Math.round(Number(prod?.minOrderQty || pack)));
-      let quantity = Math.max(1, Number(it.quantity || 1));
-      if (quantity < moq) quantity = moq;
-
-      let variant = null;
-      if (it.variantSku && Array.isArray(prod.variants)) {
-        variant = prod.variants.find(v => String(v.sku) === String(it.variantSku) || String(v._id) === String(it.variantSku));
-      }
-
-      const livePrice = variant ? (variant.price ?? prod.price) : prod.price;
-      const liveStock = variant ? (variant.stock ?? 0) : (prod.stock ?? 0);
-      const varActive = variant ? (variant.isActive !== false) : true;
-      const isAvailable = prod.isActive !== false && varActive && liveStock > 0;
-
-      return {
-        ...prod,
-        _id: prod._id,
-        productId: String(prod._id),
-        variantSku: it.variantSku || (variant?.sku || ""),
-        name: prod.name,
-        price: livePrice,
-        mrp: prod.mrp || livePrice,
-        gst: prod.gst || 0,
-        stock: liveStock,
-        packSize: pack,
-        minOrderQty: moq,
-        quantity,
-        image: (variant?.images?.[0]?.url || variant?.images?.[0] || prod.images?.[0]?.url || prod.images?.[0] || ""),
-        attributes: variant?.attributes || it.attributes,
-        bulkTiers: prod.bulkTiers || [],
-        bulkDiscountQuantity: prod.bulkDiscountQuantity || 0,
-        bulkDiscountPriceReduction: prod.bulkDiscountPriceReduction || 0,
-        isActive: prod.isActive !== false && varActive,
-        isAvailable
-      };
-    });
-
-    res.json({ items: synced });
-  } catch (err) {
-    console.error("Cart sync error:", err);
-    res.status(500).json({ error: "cart_sync_failed" });
-  }
 });
 
 // Public: Get partner details by ID for verification
