@@ -1,42 +1,45 @@
 import { Redis } from "@upstash/redis";
 
-const client = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
-});
+// Redis cache is explicitly disabled per instructions: all data will be fetched directly from MongoDB
+export const REDIS_ENABLED = process.env.ENABLE_REDIS === "true";
+
+let client = null;
+if (REDIS_ENABLED && process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  try {
+    client = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    console.log("🚀 Upstash Redis (REST) Client Initialized");
+  } catch (err) {
+    console.warn("⚠️ Redis initialization failed, running in direct DB mode:", err.message);
+    client = null;
+  }
+} else {
+  console.log("ℹ️ Redis caching is DISABLED. Direct database querying is active.");
+}
 
 const PREFIX = "click2kart";
 
-// Log connection (Upstash REST is stateless, so we just log configuration)
-console.log("🚀 Upstash Redis (REST) Client Initialized");
-
 /**
- * Get or set cache helper with prefix, logging and metrics
+ * Get or set cache helper - when Redis is disabled, executes callback directly against DB
  */
 export const getOrSetCache = async (key, cb, ttl = 3600) => {
+  if (!REDIS_ENABLED || !client) {
+    return await cb();
+  }
   const fullKey = `${PREFIX}:${key}`;
   try {
     const cachedValue = await client.get(fullKey);
-    
     if (cachedValue) {
-      console.log(`✅ [CACHE HIT]: ${fullKey}`);
-      // Tracking Hit Metric
-      client.incr(`${PREFIX}:metrics:hits`).catch(() => {});
-      
-      return typeof cachedValue === 'string' ? JSON.parse(cachedValue) : cachedValue;
+      return typeof cachedValue === "string" ? JSON.parse(cachedValue) : cachedValue;
     }
-
-    console.log(`❌ [CACHE MISS]: ${fullKey}`);
-    // Tracking Miss Metric
-    client.incr(`${PREFIX}:metrics:misses`).catch(() => {});
-    
     const freshData = await cb();
     if (freshData !== undefined && freshData !== null) {
       await client.set(fullKey, JSON.stringify(freshData), { ex: ttl });
     }
     return freshData;
   } catch (error) {
-    console.error(`⚠️ Cache error for key ${fullKey}:`, error);
     return await cb(); // Fallback to DB
   }
 };
@@ -45,6 +48,7 @@ export const getOrSetCache = async (key, cb, ttl = 3600) => {
  * Delete cache key(s) or patterns
  */
 export const delCache = async (keys) => {
+  if (!REDIS_ENABLED || !client) return;
   try {
     const prepareKey = (k) => (k.startsWith(PREFIX) ? k : `${PREFIX}:${k}`);
 
@@ -78,6 +82,7 @@ export const delCache = async (keys) => {
  * Get current version of a cache namespace
  */
 export const getCacheVersion = async (namespace) => {
+  if (!REDIS_ENABLED || !client) return "1";
   try {
     const version = await client.get(`${PREFIX}:version:${namespace}`);
     return version || "1";
@@ -90,6 +95,7 @@ export const getCacheVersion = async (namespace) => {
  * Increment version of a cache namespace
  */
 export const bumpCacheVersion = async (namespace) => {
+  if (!REDIS_ENABLED || !client) return;
   try {
     await client.incr(`${PREFIX}:version:${namespace}`);
   } catch (error) {
@@ -98,22 +104,23 @@ export const bumpCacheVersion = async (namespace) => {
 };
 
 // No-op for connectRedis as Upstash REST is stateless
-export const connectRedis = async () => {
-  // REST client doesn't need explicit connect
-};
+export const connectRedis = async () => {};
 
 /**
- * Rate limiting logic using Upstash INCR
+ * Rate limiting logic
  */
 export const incrRateLimit = async (key) => {
+  if (!REDIS_ENABLED || !client) return 1;
   return await client.incr(key);
 };
 
 export const expireRateLimit = async (key, seconds) => {
+  if (!REDIS_ENABLED || !client) return 1;
   return await client.expire(key, seconds);
 };
 
 export const ttlRateLimit = async (key) => {
+  if (!REDIS_ENABLED || !client) return 60;
   return await client.ttl(key);
 };
 
@@ -121,6 +128,9 @@ export const ttlRateLimit = async (key) => {
  * Get Cache Metrics (Hits/Misses)
  */
 export const getCacheMetrics = async () => {
+  if (!REDIS_ENABLED || !client) {
+    return { hits: 0, misses: 0, hitRate: "0% (Redis Disabled - Direct DB Mode)" };
+  }
   try {
     const [hits, misses] = await client.mget(
       `${PREFIX}:metrics:hits`,
