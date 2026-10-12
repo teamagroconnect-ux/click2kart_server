@@ -58,6 +58,8 @@ const orderSchema = new mongoose.Schema(
       reason: { type: String, default: "" },
       cancelledAt: { type: Date }
     },
+    stockDeducted: { type: Boolean, default: false },
+    stockRestored: { type: Boolean, default: false },
     notes: { type: String, default: "" },
     manualPayment: {
       amountPaid: { type: Number, default: 0 },

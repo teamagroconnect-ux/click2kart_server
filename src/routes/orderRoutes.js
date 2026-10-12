@@ -19,6 +19,7 @@ import Settings from "../models/Settings.js";
 import { confirmOrderPayment } from "../services/orderPayment.service.js";
 import { deductCreditForOrder, reverseCreditForOrder } from "../services/credit.service.js";
 import { syncActiveDelhiveryOrders } from "../services/delhiverySync.service.js";
+import { deductInventoryForOrder, restoreInventoryForOrder } from "../services/inventory.service.js";
 
 const isAdmin = (req) => {
   try {
@@ -458,33 +459,13 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
   }
 
-  // --- STOCK MANAGEMENT ---
-  for (const it of items) {
-    const qty = Number(it.quantity || 0);
-    if (it.variantSku) {
-      // Variant stock update
-      await Product.updateOne(
-        { _id: it.productId, "variants.sku": String(it.variantSku) },
-        { $inc: { "variants.$.stock": -qty } }
-      );
-    } else {
-      // Regular product stock update
-      await Product.updateOne(
-        { _id: it.productId },
-        { $inc: { stock: -qty } }
-      );
-    }
+  // --- INVENTORY DEDUCTION WITH LOGGING ---
+  try {
+    await deductInventoryForOrder(doc, { id: cust._id, role: "customer" });
+  } catch (stockErr) {
+    console.error("Failed to deduct inventory for order:", stockErr);
   }
-  // Sync total product stock (sum of variants)
-  for (const id of ids) {
-    const p = await Product.findById(id);
-    if (p && p.variants && p.variants.length > 0) {
-      const sum = p.variants.filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
-      p.stock = sum;
-      await p.save();
-    }
-  }
-  // ------------------------
+  // ----------------------------------------
 
   if (paymentMethod === "CREDIT") {
     // Generate bill for credit order
@@ -718,33 +699,13 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
     }
 
-    // --- STOCK MANAGEMENT ---
-    for (const it of items) {
-      const qty = Number(it.quantity || 0);
-      if (it.variantSku) {
-        // Variant stock update
-        await Product.updateOne(
-          { _id: it.productId, "variants.sku": String(it.variantSku) },
-          { $inc: { "variants.$.stock": -qty } }
-        );
-      } else {
-        // Regular product stock update
-        await Product.updateOne(
-          { _id: it.productId },
-          { $inc: { stock: -qty } }
-        );
-      }
+    // --- INVENTORY DEDUCTION WITH LOGGING ---
+    try {
+      await deductInventoryForOrder(doc, { id: cust._id, role: "customer" });
+    } catch (stockErr) {
+      console.error("Failed to deduct inventory for order:", stockErr);
     }
-    // Sync total product stock (sum of variants)
-    for (const id of ids) {
-      const p = await Product.findById(id);
-      if (p && p.variants && p.variants.length > 0) {
-        const sum = p.variants.filter(v => v.isActive !== false).reduce((s, v) => s + (v.stock || 0), 0);
-        p.stock = sum;
-        await p.save();
-      }
-    }
-    // ------------------------
+    // ----------------------------------------
 
     // Billing only for full online payments
     if (paymentMethod === "RAZORPAY") {
@@ -991,6 +952,14 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
     if (couponId) {
       await Coupon.findByIdAndUpdate(couponId, { $inc: { usedCount: 1 } });
     }
+
+    // --- INVENTORY DEDUCTION WITH LOGGING ---
+    try {
+      await deductInventoryForOrder(doc, { id: cust._id, role: "customer" });
+    } catch (stockErr) {
+      console.error("Failed to deduct inventory for manual order:", stockErr);
+    }
+    // ----------------------------------------
     
     // Notify admin via WebSocket
     try {
@@ -1122,7 +1091,19 @@ router.patch("/:id/reject-manual", auth, requirePermission("orders"), async (req
   
   order.paymentStatus = "FAILED";
   order.status = "CANCELLED";
+  order.cancellation = {
+    cancelledBy: "Admin",
+    reason: "Manual payment rejected by Admin",
+    cancelledAt: new Date()
+  };
   await order.save();
+
+  // Restore inventory/stock
+  try {
+    await restoreInventoryForOrder(order, { id: req.user?.id, role: req.user?.role || "admin" }, "Manual payment rejected by Admin");
+  } catch (stockErr) {
+    console.error("Failed to restore stock on reject-manual:", stockErr);
+  }
 
   try {
     const to = order.customer?.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
@@ -1269,6 +1250,64 @@ router.get("/my", auth, requireRole("customer"), async (req, res) => {
   res.json(items);
 });
 
+router.get("/my/:id", auth, requireRole("customer"), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: "invalid_id" });
+    }
+    const cust = await Customer.findById(req.user.id).lean();
+    if (!cust) return res.status(404).json({ error: "customer_not_found" });
+
+    const order = await Order.findById(req.params.id).lean();
+    if (!order) return res.status(404).json({ error: "order_not_found" });
+
+    // Authorization check
+    const isOwner =
+      (order.customer?.phone && order.customer.phone === cust.phone) ||
+      (order.customer?.id && String(order.customer.id) === String(cust._id)) ||
+      (order.customer?.email && cust.email && order.customer.email.toLowerCase() === cust.email.toLowerCase());
+
+    if (!isOwner) {
+      return res.status(403).json({ error: "unauthorized" });
+    }
+
+    // Attach enriched buyer details (address, business, GST, contact)
+    const buyerDetails = {
+      name: order.customer?.name || cust.name || "Customer",
+      businessName: cust.kyc?.businessName || "",
+      phone: order.customer?.phone || cust.phone || "",
+      whatsappNumber: cust.whatsappNumber || cust.phone || "",
+      email: order.customer?.email || cust.email || "",
+      gstin: cust.kyc?.gstin || "",
+      pan: cust.kyc?.pan || "",
+      city: cust.kyc?.city || cust.address || "",
+      state: cust.kyc?.state || ""
+    };
+
+    // Ensure shipping address fallback
+    let shippingAddress = order.shippingAddress || {};
+    if (!shippingAddress.line1 && (cust.kyc?.addressLine1 || cust.address)) {
+      shippingAddress = {
+        line1: cust.kyc?.addressLine1 || cust.address || "",
+        line2: cust.kyc?.addressLine2 || "",
+        city: cust.kyc?.city || "",
+        state: cust.kyc?.state || "",
+        pincode: cust.kyc?.pincode || ""
+      };
+    }
+
+    return res.json({
+      ...order,
+      buyerDetails,
+      shippingAddress
+    });
+  } catch (err) {
+    console.error("Failed to load customer order:", err);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+
 router.get("/", auth, requirePermission("orders"), async (req, res) => {
   const status = req.query.status;
   const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -1346,23 +1385,11 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
         }
       }
 
-      // Restore product stock
-      for (const item of order.items) {
-        try {
-          if (item.variantSku) {
-            await Product.updateOne(
-              { _id: item.product, "variants.sku": item.variantSku },
-              { $inc: { stock: item.quantity, "variants.$.stock": item.quantity } }
-            );
-          } else {
-            await Product.updateOne(
-              { _id: item.product },
-              { $inc: { stock: item.quantity } }
-            );
-          }
-        } catch (stockErr) {
-          console.error("Failed to restore stock on cancel:", stockErr);
-        }
+      // Restore product stock with full StockTxn and AuditLog tracking
+      try {
+        await restoreInventoryForOrder(order, { id: req.user?.id, role: req.user?.role || "admin" }, reason || "Cancelled by administrator");
+      } catch (stockErr) {
+        console.error("Failed to restore stock on admin cancel:", stockErr);
       }
     }
 
@@ -1421,23 +1448,11 @@ router.post("/:id/cancel", auth, requireRole("customer"), async (req, res) => {
     }
   }
 
-  // Restore inventory/stock
-  for (const item of order.items) {
-    try {
-      if (item.variantSku) {
-        await Product.updateOne(
-          { _id: item.product, "variants.sku": item.variantSku },
-          { $inc: { stock: item.quantity, "variants.$.stock": item.quantity } }
-        );
-      } else {
-        await Product.updateOne(
-          { _id: item.product },
-          { $inc: { stock: item.quantity } }
-        );
-      }
-    } catch (stockErr) {
-      console.error("Failed to restore stock on cancel:", stockErr);
-    }
+  // Restore product stock with full StockTxn and AuditLog tracking
+  try {
+    await restoreInventoryForOrder(order, { id: cust._id.toString(), role: "customer" }, reason || "Cancelled by retailer request");
+  } catch (stockErr) {
+    console.error("Failed to restore stock on customer cancel:", stockErr);
   }
 
   try {

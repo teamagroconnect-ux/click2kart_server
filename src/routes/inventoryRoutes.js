@@ -175,11 +175,16 @@ router.post("/bulk-in", auth, requirePermission("inventory"), async (req, res) =
   res.status(200).json({ success: true, updated: results.length, results });
 });
 
-// History: list recent stock-in records
+// History: list inventory transaction records (ADDED, SOLD, RESTOCKED, ADJUST)
 router.get("/history", auth, requirePermission("inventory"), async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const items = await StockTxn.find({ type: "ADDED" })
+  const filter = {};
+  if (req.query.type && req.query.type !== "ALL") {
+    filter.type = req.query.type;
+  }
+  const totalCount = await StockTxn.countDocuments(filter);
+  const items = await StockTxn.find(filter)
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
@@ -191,13 +196,16 @@ router.get("/history", auth, requirePermission("inventory"), async (req, res) =>
     variantSku: x.variantSku || "",
     store: x.product?.store || "",
     section: x.product?.section || "",
+    type: x.type,
     quantity: x.quantity,
+    refType: x.refType || "",
+    refId: x.refId || "",
     note: x.note || "",
     before: x.before,
     after: x.after,
     createdAt: x.createdAt
   }));
-  res.json({ page, limit, count: out.length, items: out });
+  res.json({ page, limit, count: out.length, total: totalCount, items: out });
 });
 
 // Summary analytics
