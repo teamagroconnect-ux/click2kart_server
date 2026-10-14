@@ -41,6 +41,12 @@ const orderSchema = new mongoose.Schema(
       deliveredAt: { type: Date }
     },
     creditTxnId: { type: mongoose.Schema.Types.ObjectId, ref: "CreditLedger" },
+    creditAmountUsed: { type: Number, default: 0 },
+    splitPayment: {
+      creditAmount: { type: Number, default: 0 },
+      onlineAmount: { type: Number, default: 0 },
+      onlineMethod: { type: String, enum: ["RAZORPAY", "MANUAL", "NONE"], default: "NONE" }
+    },
     paymentStatus: { type: String, enum: ["PENDING", "PAYMENT_SUBMITTED", "PARTIAL", "PAID", "FAILED", "REFUNDED"], default: "PENDING" },
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },

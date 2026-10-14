@@ -40,6 +40,29 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
     `;
   }).join("");
 
+  const isCancelled = order?.status === "CANCELLED";
+  let paymentTypeDisplay = bill.paymentType;
+  if (order?.splitPayment?.creditAmount > 0) {
+    paymentTypeDisplay = `Split (Credit: ₹${order.splitPayment.creditAmount.toLocaleString('en-IN')} + ${order.splitPayment.onlineMethod}: ₹${order.splitPayment.onlineAmount.toLocaleString('en-IN')})`;
+  } else if (order?.paymentMethod === "CREDIT") {
+    paymentTypeDisplay = "B2B Credit Facility (100%)";
+  } else if (order?.paymentMethod === "COD_20") {
+    paymentTypeDisplay = `COD (20% Advance: ₹${order.advancePaidAmount || 0} + ₹${order.codDueAmount || 0} on Delivery)`;
+  } else if (order?.paymentMethod === "MANUAL") {
+    paymentTypeDisplay = `Direct Bank Transfer (UTR: ${order?.manualPayment?.utr || 'Pending'})`;
+  }
+
+  const cancelBanner = isCancelled ? `
+    <div style="background:#fef2f2;border:1px solid #f87171;color:#b91c1c;padding:12px 16px;border-radius:10px;margin-bottom:16px;font-weight:700;display:flex;align-items:center;justify-content:space-between;">
+      <span>⚠️ THIS ORDER HAS BEEN CANCELLED${order?.cancellation?.reason ? ` (${order.cancellation.reason})` : ''} · INVOICE VOID</span>
+      <span style="font-size:12px;opacity:0.8">${order?.cancellation?.cancelledAt ? new Date(order.cancellation.cancelledAt).toLocaleDateString("en-IN") : ''}</span>
+    </div>
+  ` : "";
+
+  const statusBadge = isCancelled
+    ? `<div class="badge" style="background:#fee2e2;color:#dc2626;border-color:#fca5a5;">ORDER CANCELLED · VOID</div>`
+    : `<div class="badge">Tax Invoice</div>`;
+
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${companyName} | Tax Invoice</title>
@@ -68,6 +91,7 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
 </style></head>
 <body>
   <div class="invoice">
+    ${cancelBanner}
     <div class="row" style="align-items:center;justify-content:space-between">
       <div class="brand">
         <img src="${logo}" alt="${companyName}">
@@ -78,7 +102,7 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
           <div class="muted">GSTIN: ${companyGst}</div>
         </div>
       </div>
-      <div class="right"><div class="badge">Tax Invoice</div></div>
+      <div class="right">${statusBadge}</div>
     </div>
     <div class="divider"></div>
     <div class="row">
@@ -88,7 +112,8 @@ export const renderInvoiceHTML = (bill, customer, order, company = {}) => {
           <div class="k">Invoice No</div><div class="v">${bill.invoiceNumber}</div>
           <div class="k">Order ID</div><div class="v">${order?._id || ""}</div>
           <div class="k">Invoice Date</div><div class="v">${new Date(bill.date).toLocaleDateString("en-IN")}</div>
-          <div class="k">Payment Mode</div><div class="v">${bill.paymentType}</div>
+          <div class="k">Payment Mode</div><div class="v">${paymentTypeDisplay}</div>
+          <div class="k">Order Status</div><div class="v" style="${isCancelled ? 'color:#dc2626;font-weight:900;' : ''}">${order?.status || 'CONFIRMED'}</div>
           <div class="k">Place of Supply</div><div class="v">${order?.shippingAddress?.state || customer?.kyc?.state || (process.env.COMPANY_STATE || "KA")}</div>
         </div>
       </div>

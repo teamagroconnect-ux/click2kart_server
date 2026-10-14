@@ -35,6 +35,110 @@ const isAdmin = (req) => {
 
 const router = express.Router();
 
+const sendRetailerOrderEmail = async ({ order, customer, statusNote }) => {
+  try {
+    const to = customer?.email || order?.customer?.email;
+    if (!to) return;
+
+    let custObj = customer;
+    if (!custObj?.availableCredit && (order.customer?.id || customer?._id)) {
+      custObj = await Customer.findById(order.customer?.id || customer?._id).lean();
+    }
+
+    const company = process.env.COMPANY_NAME || "Click2Kart";
+    const clientBase = (process.env.CLIENT_URL || "https://click2kart.net").replace(/\/$/, "");
+    const receiptUrl = `${clientBase}/order-confirmation/${order._id}`;
+
+    const creditUsed = Number(order.creditAmountUsed || (order.paymentMethod === "CREDIT" ? order.totalEstimate : 0));
+    const isCreditUser = custObj?.isCreditEnabled || creditUsed > 0;
+
+    let creditBlocks = [];
+    if (isCreditUser) {
+      creditBlocks = [
+        { label: "B2B Credit Facility", value: "Active" },
+        ...(creditUsed > 0 ? [{ label: "Credit Deducted for Order", value: `₹${creditUsed.toLocaleString("en-IN")}` }] : []),
+        { label: "Available Credit Remaining", value: `₹${Number(custObj?.availableCredit || 0).toLocaleString("en-IN")}` },
+        { label: "Current Outstanding Balance", value: `₹${Number(custObj?.outstandingBalance || 0).toLocaleString("en-IN")}` },
+        { label: "Credit Limit", value: `₹${Number(custObj?.creditLimit || 0).toLocaleString("en-IN")}` }
+      ];
+    }
+
+    let paymentLabel = "Prepaid";
+    if (order.splitPayment?.creditAmount > 0) {
+      paymentLabel = `Split Payment (Credit: ₹${order.splitPayment.creditAmount.toLocaleString('en-IN')} + ${order.splitPayment.onlineMethod}: ₹${order.splitPayment.onlineAmount.toLocaleString('en-IN')})`;
+    } else if (order.paymentMethod === "CREDIT") {
+      paymentLabel = "Retailer Credit (100%)";
+    } else if (order.paymentMethod === "COD_20") {
+      paymentLabel = `Advance COD (20% Paid: ₹${(order.advancePaidAmount || Math.round(order.totalEstimate * 0.2)).toLocaleString('en-IN')}, Due on Delivery: ₹${(order.codDueAmount || Math.round(order.totalEstimate * 0.8)).toLocaleString('en-IN')})`;
+    } else if (order.paymentMethod === "MANUAL") {
+      paymentLabel = `Direct Bank Transfer (UTR: ${order.manualPayment?.utr || 'Pending Verification'})`;
+    } else if (order.paymentMethod === "RAZORPAY") {
+      paymentLabel = "Razorpay Online Payment (Cards/UPI/Netbanking)";
+    }
+
+    const isCancelled = order.status === "CANCELLED";
+
+    const blocks = [
+      { label: "Order Reference", value: `#${String(order._id).slice(-8).toUpperCase()}` },
+      { label: "Order Status", value: order.status },
+      { label: "Payment Mode", value: paymentLabel },
+      { label: "Payment Status", value: order.paymentStatus || "PENDING" },
+      { label: "Delivery Channel", value: order.deliveryChannel === "LOCAL_DELIVERY" ? "Local Direct Delivery" : "Delhivery Express Logistics" },
+      { label: "Shipping Address", value: `${order.shippingAddress?.line1 || ""}, ${order.shippingAddress?.city || ""}, ${order.shippingAddress?.state || ""} ${order.shippingAddress?.pincode || ""}`.trim() || "Address on File" },
+      ...(statusNote ? [{ label: "Order Note", value: statusNote }] : []),
+      ...creditBlocks
+    ];
+
+    const receiptButtonHtml = `
+      <div style="text-align:center;margin:28px 0;">
+        <a href="${receiptUrl}" style="display:inline-block;padding:14px 28px;background:#7c3aed;color:#ffffff;font-size:14px;font-weight:800;text-decoration:none;border-radius:12px;letter-spacing:0.04em;box-shadow:0 4px 16px rgba(124,58,237,0.25);">
+          View Full Order Receipt & Invoice
+        </a>
+      </div>
+    `;
+
+    const heading = isCancelled
+      ? "Order Cancelled Notice"
+      : order.status === "PENDING_ADMIN_APPROVAL"
+      ? "Payment Submitted - Awaiting Verification"
+      : "Order Confirmation & Tax Receipt";
+
+    const subheading = isCancelled
+      ? `Order #${String(order._id).slice(-8).toUpperCase()} was cancelled. ${creditUsed > 0 ? `Credit of ₹${creditUsed.toLocaleString('en-IN')} has been restored to your balance.` : ''}`
+      : `Thank you for your order, ${order.customer?.name || custObj?.name || "Retailer"}! Your receipt and account summary are below.`;
+
+    const subtotal = (order.items || []).reduce((s, it) => s + (it.lineTotal || 0), 0);
+    const totals = { subtotal, gstTotal: 0, total: order.totalEstimate };
+
+    const rendered = renderMail({
+      heading,
+      subheading,
+      highlight: `Order Total: ₹${Number(order.totalEstimate || 0).toLocaleString("en-IN")}`,
+      blocks,
+      items: (order.items || []).map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        price: it.price,
+        lineTotal: it.lineTotal
+      })),
+      totals
+    });
+
+    const finalHtml = rendered.includes("<div style=\"margin-top:40px;")
+      ? rendered.replace("<div style=\"margin-top:40px;", `${receiptButtonHtml}<div style=\"margin-top:40px;`)
+      : `${rendered}${receiptButtonHtml}`;
+
+    const subject = isCancelled
+      ? `[CANCELLED] Order #${String(order._id).slice(-8).toUpperCase()} - ${company}`
+      : `Order Confirmation #${String(order._id).slice(-8).toUpperCase()} - ${company}`;
+
+    await sendEmail({ to, subject, html: finalHtml });
+    console.log(`✅ Order email sent to ${to} for order #${order._id}`);
+  } catch (err) {
+    console.error("Order notification email failed:", err?.message || err);
+  }
+};
+
 const _sanitize = (s) => String(s || "").trim().replace(/^['"`]+|['"`]+$/g, "").replace(/\/+$/, "");
 const getDelhiveryBase = () => {
   const url = process.env.DELHIVERY_BASE_URL || "https://track.delhivery.com";
@@ -447,6 +551,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     deliveryChannel,
     localDelivery: deliveryChannel === "LOCAL_DELIVERY" ? { status: "PENDING" } : undefined,
     creditTxnId,
+    creditAmountUsed: paymentMethod === "CREDIT" ? payableTotal : 0,
     razorpayOrderId: razorpayOrder?.id,
     notes: notes || "",
     codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
@@ -494,26 +599,7 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     }
 
     try {
-      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-      const html = renderMail({
-        heading: "Order Placed with Credit",
-        subheading: "Your order has been placed successfully using your credit facility.",
-        highlight: `Order ID: ${doc._id}`,
-        blocks: [
-          { label: "Payment Method", value: "Retailer Credit" },
-          { label: "Total Paid", value: `₹${Number(payableTotal).toLocaleString("en-IN")}` },
-          { label: "Delivery Method", value: deliveryChannel === "LOCAL_DELIVERY" ? "Local Delivery" : "Delhivery Express" },
-          { label: "Status", value: "CONFIRMED" }
-        ],
-        items: doc.items.map(it => ({
-          name: it.name,
-          quantity: it.quantity,
-          price: it.price,
-          lineTotal: it.lineTotal
-        })),
-        totals: { subtotal: totals.subtotal, gstTotal: totals.gstTotal, total: totals.total }
-      });
-      if (to) await sendEmail({ to, subject: `Credit Order Placed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
+      await sendRetailerOrderEmail({ order: doc, customer: cust });
     } catch {}
   } else if (paymentMethod === "CASH") {
     notifyAdmin("new_offline_order", doc);
@@ -546,9 +632,8 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
   });
 });
 
-// Prepare Payment (no Order creation) - new flow
 router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) => {
-  const { items, paymentMethod, couponCode } = req.body || {};
+  const { items, paymentMethod, couponCode, applyCredit } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
   try {
@@ -565,15 +650,27 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
 
     const { finalAmount: payableTotal } = await validateAndApplyCoupon(couponCode, totals.total);
 
+    let creditToUse = 0;
+    let netPayable = payableTotal;
+
+    if (applyCredit && paymentMethod === "RAZORPAY") {
+      const cust = await Customer.findById(req.user.id).select("isCreditEnabled availableCredit");
+      if (cust?.isCreditEnabled && (cust.availableCredit || 0) > 0) {
+        creditToUse = Math.min(Number(cust.availableCredit || 0), payableTotal);
+        netPayable = Math.max(0, payableTotal - creditToUse);
+      }
+    }
+
     const amountPaise = paymentMethod === "COD_20"
       ? Math.round(payableTotal * 0.2 * 100)
-      : Math.round(payableTotal * 100);
+      : Math.round(netPayable * 100);
+
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
       return res.status(400).json({ error: "invalid_amount" });
     }
     const rp = await razorpay.orders.create({ amount: amountPaise, currency: "INR", receipt: `prepay_${Date.now()}` });
-    const checksum = crypto.createHash("sha256").update(JSON.stringify({ items, paymentMethod, amountPaise })).digest("hex");
-    return res.json({ razorpayOrderId: rp.id, amountPaise: rp.amount, checksum });
+    const checksum = crypto.createHash("sha256").update(JSON.stringify({ items, paymentMethod, amountPaise, creditToUse })).digest("hex");
+    return res.json({ razorpayOrderId: rp.id, amountPaise: rp.amount, creditToUse, netPayable, checksum });
   } catch (e) {
     console.error("Prepare payment failed:", e?.response?.data || e?.message || e);
     return res.status(500).json({ error: "payment_initiation_failed" });
@@ -582,7 +679,7 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
 
 // Create Order after payment verification (new flow)
 router.post("/create-after-verify", auth, requireRole("customer"), async (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, items, paymentMethod, notes, couponCode } = req.body || {};
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, items, paymentMethod, notes, couponCode, applyCredit } = req.body || {};
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   
@@ -606,7 +703,7 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
     return res.json({ success: true, orderId: preExisting._id });
   }
 
-  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address");
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address isCreditEnabled availableCredit creditLimit usedCredit outstandingBalance");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
 
@@ -659,7 +756,29 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       status: "PENDING"
     };
 
+    const newOrderId = new mongoose.Types.ObjectId();
+    let creditTxnId = undefined;
+    let creditToUse = 0;
+
+    if (applyCredit && paymentMethod === "RAZORPAY" && cust.isCreditEnabled && (cust.availableCredit || 0) > 0) {
+      creditToUse = Math.min(Number(cust.availableCredit || 0), payableTotal);
+      if (creditToUse > 0) {
+        try {
+          const { ledger } = await deductCreditForOrder({
+            customerId: cust._id,
+            orderId: newOrderId,
+            orderTotal: creditToUse,
+            customerName: cust.name
+          });
+          creditTxnId = ledger._id;
+        } catch (cErr) {
+          console.error("Credit deduction in split Razorpay failed:", cErr);
+        }
+      }
+    }
+
     const doc = await Order.create({
+      _id: newOrderId,
       customer: { id: cust._id, name: cust.name, phone: cust.phone, email: cust.email || "" },
       shippingAddress: {
         line1: cust.kyc?.addressLine1 || cust.address || "",
@@ -683,8 +802,15 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
       couponCode: couponCode?.toUpperCase() || "",
       couponDiscount: coupDiscount,
       status: "CONFIRMED", // Razorpay orders are directly confirmed after successful payment
-      paymentMethod,
+      paymentMethod: creditToUse > 0 ? "CREDIT" : paymentMethod,
       paymentStatus: paymentMethod === "COD_20" ? "PARTIAL" : "PAID",
+      creditTxnId,
+      creditAmountUsed: creditToUse,
+      splitPayment: creditToUse > 0 ? {
+        creditAmount: creditToUse,
+        onlineAmount: Math.max(0, payableTotal - creditToUse),
+        onlineMethod: "RAZORPAY"
+      } : undefined,
       razorpayOrderId: razorpay_order_id,
       razorpayPaymentId: razorpay_payment_id,
       razorpaySignature: razorpay_signature,
@@ -707,38 +833,25 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
     }
     // ----------------------------------------
 
-    // Billing only for full online payments
-    if (paymentMethod === "RAZORPAY") {
-      try {
-        await createBillFromData({
-          customerData: { phone: doc.customer.phone, name: doc.customer.name, email: doc.customer.email },
-          items: doc.items.map(it => ({ 
-            product: it.product, 
-            variantSku: it.variantSku ? String(it.variantSku) : undefined, 
-            quantity: it.quantity 
-          })),
-          paymentType: "RAZORPAY",
-          existingOrderId: doc._id
-        });
-      } catch {}
-    }
+    // Billing for online / credit payments
     try {
-      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-      const paidText = paymentMethod === "COD_20"
-        ? `Advance Paid: ₹${Number(doc.totalEstimate * 0.2).toLocaleString("en-IN")}`
-        : `Amount Paid: ₹${Number(doc.totalEstimate).toLocaleString("en-IN")}`;
-      const html = renderMail({
-        heading: "Payment Confirmed",
-        subheading: "We’ve confirmed your payment and are preparing your shipment.",
-        highlight: `Order ID: ${doc._id}`,
-        blocks: [
-          { label: "Payment Method", value: doc.paymentMethod },
-          { label: "Payment", value: paidText },
-          { label: "Current Status", value: doc.status }
-        ]
+      await createBillFromData({
+        customerData: { phone: doc.customer.phone, name: doc.customer.name, email: doc.customer.email },
+        items: doc.items.map(it => ({ 
+          product: it.product, 
+          variantSku: it.variantSku ? String(it.variantSku) : undefined, 
+          quantity: it.quantity 
+        })),
+        paymentType: creditToUse > 0 ? "CREDIT" : paymentMethod,
+        existingOrderId: doc._id
       });
-      if (to) await sendEmail({ to, subject: `Payment confirmed - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
     } catch {}
+
+    // Send confirmation email to retailer with receipt and credit account update
+    try {
+      await sendRetailerOrderEmail({ order: doc, customer: cust });
+    } catch {}
+
     // Attempt shipment creation (non-blocking)
     try { await tryCreateDelhiveryShipment(doc); } catch {}
     return res.json({ success: true, orderId: doc._id });
@@ -872,9 +985,9 @@ router.post("/verify-payment", async (req, res) => {
 
 // Manual Payment Submission (UPI/Bank) - create order pending approval
 router.post("/manual-submit", auth, requireRole("customer"), async (req, res) => {
-  const { items, amountPaid, utr, note, codAdvance20, couponCode, deliveryChannel: requestedChannel } = req.body || {};
+  const { items, amountPaid, utr, note, codAdvance20, couponCode, deliveryChannel: requestedChannel, applyCredit } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
-  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address deliverySettings");
+  const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address deliverySettings isCreditEnabled availableCredit creditLimit usedCredit outstandingBalance");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
   if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
   try {
@@ -913,7 +1026,31 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
       status: "PENDING"
     };
 
+    const newOrderId = new mongoose.Types.ObjectId();
+    let creditTxnId = undefined;
+    let creditToUse = 0;
+
+    if (applyCredit && cust.isCreditEnabled && (cust.availableCredit || 0) > 0) {
+      creditToUse = Math.min(Number(cust.availableCredit || 0), payableTotal);
+      if (creditToUse > 0) {
+        try {
+          const { ledger } = await deductCreditForOrder({
+            customerId: cust._id,
+            orderId: newOrderId,
+            orderTotal: creditToUse,
+            customerName: cust.name
+          });
+          creditTxnId = ledger._id;
+        } catch (cErr) {
+          console.error("Credit deduction in manual split failed:", cErr);
+        }
+      }
+    }
+
+    const remainingToPay = Math.max(0, payableTotal - creditToUse);
+
     const doc = await Order.create({
+      _id: newOrderId,
       customer: { id: cust._id, name: cust.name, phone: cust.phone, email: cust.email || "" },
       shippingAddress: {
         line1: cust.kyc?.addressLine1 || cust.address || "",
@@ -942,7 +1079,14 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
       deliveryChannel,
       localDelivery: deliveryChannel === "LOCAL_DELIVERY" ? { status: "PENDING" } : undefined,
       notes: note || "",
-      manualPayment: { amountPaid: Number(amountPaid || 0), utr: String(utr || ""), note: String(note || "") },
+      manualPayment: { amountPaid: Number(amountPaid || remainingToPay), utr: String(utr || ""), note: String(note || "") },
+      creditTxnId,
+      creditAmountUsed: creditToUse,
+      splitPayment: creditToUse > 0 ? {
+        creditAmount: creditToUse,
+        onlineAmount: remainingToPay,
+        onlineMethod: "MANUAL"
+      } : undefined,
       codAdvancePercent: codAdvance20 ? 20 : 0,
       codDueAmount: codAdvance20 ? Number((payableTotal * 0.8).toFixed(2)) : 0,
       userDiscount: userDiscountData,
@@ -969,19 +1113,15 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
     }
 
     try {
-      const to = cust.email || process.env.MAIL_TO || process.env.COMPANY_EMAIL || process.env.MAIL_FROM;
-      const html = renderMail({
-        heading: codAdvance20 ? "COD Advance Submitted" : "Payment Submitted",
-        subheading: codAdvance20 ? "We have received your 20% COD advance. Our team will verify shortly." : "We have received your payment details. Our team will verify shortly.",
-        highlight: `Order ID: ${doc._id}`,
-        blocks: [
-          { label: "Payment Method", value: codAdvance20 ? "COD (20% via Manual UPI/Bank)" : "Manual (UPI/Bank)" },
-          { label: "Amount Submitted", value: `₹${Number(amountPaid || 0).toLocaleString("en-IN")}` },
-          { label: "UTR", value: String(utr || "-") },
-          { label: "Status", value: "Pending Admin Approval" }
-        ]
+      await sendRetailerOrderEmail({
+        order: doc,
+        customer: cust,
+        statusNote: codAdvance20
+          ? "20% COD advance submitted. Our team will verify UTR and dispatch."
+          : creditToUse > 0
+          ? `Split payment: ₹${creditToUse.toLocaleString('en-IN')} paid via credit, and ₹${remainingToPay.toLocaleString('en-IN')} submitted via bank transfer (UTR: ${utr || '-'}). Awaiting admin verification.`
+          : `Bank payment submitted (UTR: ${utr || '-'}). Awaiting admin verification.`
       });
-      if (to) await sendEmail({ to, subject: `Payment submitted - ${process.env.COMPANY_NAME || "Click2Kart"}`, html });
     } catch {}
     return res.json({ success: true, orderId: doc._id });
   } catch {
@@ -1262,9 +1402,11 @@ router.get("/my/:id", auth, requireRole("customer"), async (req, res) => {
     if (!order) return res.status(404).json({ error: "order_not_found" });
 
     // Authorization check
+    const cleanPhone = (p) => (p || "").replace(/\D/g, "").slice(-10);
     const isOwner =
-      (order.customer?.phone && order.customer.phone === cust.phone) ||
+      (order.customer?.phone && cleanPhone(order.customer.phone) === cleanPhone(cust.phone)) ||
       (order.customer?.id && String(order.customer.id) === String(cust._id)) ||
+      (order.customerId && String(order.customerId) === String(cust._id)) ||
       (order.customer?.email && cust.email && order.customer.email.toLowerCase() === cust.email.toLowerCase());
 
     if (!isOwner) {
@@ -1306,7 +1448,6 @@ router.get("/my/:id", auth, requireRole("customer"), async (req, res) => {
     return res.status(500).json({ error: "server_error" });
   }
 });
-
 
 router.get("/", auth, requirePermission("orders"), async (req, res) => {
   const status = req.query.status;
@@ -1368,21 +1509,22 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
         cancelledAt: new Date()
       };
 
-      // If paid via CREDIT, auto-refund/rollback credit
-      if (order.paymentMethod === "CREDIT") {
-        try {
-          const cust = await Customer.findOne({ $or: [{ phone: order.customer.phone }, { email: order.customer.email }] });
-          if (cust) {
-            await reverseCreditForOrder({
-              customerId: cust._id,
-              orderId: order._id,
-              orderTotal: order.totalEstimate,
-              reason: `Order cancelled by Admin: ${reason || "Admin Cancellation"}`
-            });
-          }
-        } catch (revErr) {
-          console.error("Credit reversal on admin cancel failed:", revErr);
+      // If paid via CREDIT or split CREDIT, auto-refund/rollback credit
+      const creditRefundAmount = Number(order.creditAmountUsed || (order.paymentMethod === "CREDIT" ? order.totalEstimate : (order.splitPayment?.creditAmount || 0)));
+      let targetCust = null;
+      try {
+        targetCust = await Customer.findOne({ $or: [{ phone: order.customer.phone }, { email: order.customer.email }] });
+        if (targetCust && creditRefundAmount > 0) {
+          await reverseCreditForOrder({
+            customerId: targetCust._id,
+            orderId: order._id,
+            orderTotal: creditRefundAmount,
+            reason: `Order cancelled by Admin: ${reason || "Admin Cancellation"}`
+          });
+          targetCust = await Customer.findById(targetCust._id).lean();
         }
+      } catch (revErr) {
+        console.error("Credit reversal on admin cancel failed:", revErr);
       }
 
       // Restore product stock with full StockTxn and AuditLog tracking
@@ -1390,6 +1532,17 @@ router.patch("/:id/status", auth, requireRole("admin"), async (req, res) => {
         await restoreInventoryForOrder(order, { id: req.user?.id, role: req.user?.role || "admin" }, reason || "Cancelled by administrator");
       } catch (stockErr) {
         console.error("Failed to restore stock on admin cancel:", stockErr);
+      }
+
+      // Send cancellation email to retailer
+      try {
+        sendRetailerOrderEmail({
+          order,
+          customer: targetCust,
+          statusNote: `Order cancelled by administrator. ${creditRefundAmount > 0 ? `Credit of ₹${creditRefundAmount.toLocaleString('en-IN')} has been restored to your credit account.` : ''}`
+        });
+      } catch (emailErr) {
+        console.error("Failed to send admin cancellation email:", emailErr);
       }
     }
 
@@ -1414,7 +1567,13 @@ router.post("/:id/cancel", auth, requireRole("customer"), async (req, res) => {
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
 
   // Ownership verification
-  const isOwner = (cust.phone && order.customer.phone === cust.phone) || (cust.email && order.customer.email === cust.email);
+  const cleanPhone = (p) => (p || "").replace(/\D/g, "").slice(-10);
+  const isOwner =
+    (cust.phone && cleanPhone(order.customer?.phone) === cleanPhone(cust.phone)) ||
+    (order.customer?.id && String(order.customer.id) === String(cust._id)) ||
+    (order.customerId && String(order.customerId) === String(cust._id)) ||
+    (cust.email && order.customer?.email && order.customer.email.toLowerCase() === cust.email.toLowerCase());
+
   if (!isOwner) return res.status(403).json({ error: "forbidden", message: "You can only cancel your own orders" });
 
   // Eligibility verification: cannot cancel if already dispatched/delivered
@@ -1434,15 +1593,18 @@ router.post("/:id/cancel", auth, requireRole("customer"), async (req, res) => {
     cancelledAt: new Date()
   };
 
-  // If paid via CREDIT, auto-refund/rollback credit
-  if (order.paymentMethod === "CREDIT") {
+  // If paid via CREDIT or split CREDIT, auto-refund/rollback credit
+  const creditRefundAmount = Number(order.creditAmountUsed || (order.paymentMethod === "CREDIT" ? order.totalEstimate : (order.splitPayment?.creditAmount || 0)));
+  let freshCust = cust;
+  if (creditRefundAmount > 0) {
     try {
       await reverseCreditForOrder({
         customerId: cust._id,
         orderId: order._id,
-        orderTotal: order.totalEstimate,
+        orderTotal: creditRefundAmount,
         reason: `Order cancelled by Retailer: ${reason || "Retailer Cancellation"}`
       });
+      freshCust = await Customer.findById(cust._id).lean();
     } catch (revErr) {
       console.error("Credit reversal on customer cancel failed:", revErr);
     }
@@ -1467,6 +1629,18 @@ router.post("/:id/cancel", auth, requireRole("customer"), async (req, res) => {
   } catch {}
 
   await order.save();
+
+  // Send cancellation confirmation email to retailer
+  try {
+    sendRetailerOrderEmail({
+      order,
+      customer: freshCust,
+      statusNote: `You have successfully cancelled this order. ${creditRefundAmount > 0 ? `Credit of ₹${creditRefundAmount.toLocaleString('en-IN')} has been restored to your credit balance.` : ''}`
+    });
+  } catch (emailErr) {
+    console.error("Failed to send customer cancellation email:", emailErr);
+  }
+
   res.json({ success: true, message: "Order cancelled successfully", order });
 });
 

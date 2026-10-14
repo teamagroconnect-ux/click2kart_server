@@ -56,17 +56,29 @@ router.get("/search", auth, requireRole("admin"), async (req, res) => {
   res.json(bills);
 });
 
-router.get("/:id/pdf", auth, requireRole("admin"), async (req, res) => {
+router.get("/:id/pdf", auth, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const bill = await Bill.findById(req.params.id).populate("customer");
   if (!bill) return res.status(404).json({ error: "not_found" });
+  if (req.user.role !== "admin") {
+    const custId = bill.customer?._id || bill.customer;
+    if (String(custId) !== String(req.user.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+  }
   streamInvoicePDF(res, bill, bill.customer);
 });
 
-router.get("/:id/html", auth, requireRole("admin"), async (req, res) => {
+router.get("/:id/html", auth, async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
   const bill = await Bill.findById(req.params.id).populate("customer");
   if (!bill) return res.status(404).json({ error: "not_found" });
+  if (req.user.role !== "admin") {
+    const custId = bill.customer?._id || bill.customer;
+    if (String(custId) !== String(req.user.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+  }
   const order = await Order.findOne({ billId: bill._id }).lean();
   const html = renderInvoiceHTML(bill.toObject(), bill.customer?.toObject(), order);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
