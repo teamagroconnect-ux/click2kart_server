@@ -1449,6 +1449,56 @@ router.get("/my/:id", auth, requireRole("customer"), async (req, res) => {
   }
 });
 
+// Safe receipt endpoint for phone / external link confirmation
+router.get("/receipt/:id", async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ error: "invalid_id" });
+    }
+    const order = await Order.findById(req.params.id).lean();
+    if (!order) return res.status(404).json({ error: "order_not_found" });
+
+    // Populate customer info if buyer details not explicitly saved
+    let buyerDetails = order.buyerDetails || {};
+    let shippingAddress = order.shippingAddress || {};
+
+    if (order.customer?.id && mongoose.isValidObjectId(order.customer.id)) {
+      const cust = await Customer.findById(order.customer.id).lean();
+      if (cust) {
+        if (!buyerDetails.name) {
+          buyerDetails = {
+            name: cust.name || order.customer?.name || "Valued Retailer",
+            businessName: cust.kyc?.businessName || "",
+            phone: cust.phone || order.customer?.phone || "",
+            whatsappNumber: cust.whatsappNumber || cust.phone || "",
+            email: cust.email || order.customer?.email || "",
+            gstin: cust.kyc?.gstin || "",
+            pan: cust.kyc?.pan || ""
+          };
+        }
+        if (!shippingAddress.line1 && (cust.kyc?.addressLine1 || cust.address)) {
+          shippingAddress = {
+            line1: cust.kyc?.addressLine1 || cust.address || "",
+            line2: cust.kyc?.addressLine2 || "",
+            city: cust.kyc?.city || "",
+            state: cust.kyc?.state || "",
+            pincode: cust.kyc?.pincode || ""
+          };
+        }
+      }
+    }
+
+    return res.json({
+      ...order,
+      buyerDetails,
+      shippingAddress
+    });
+  } catch (err) {
+    console.error("Failed to load receipt:", err);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
 router.get("/", auth, requirePermission("orders"), async (req, res) => {
   const status = req.query.status;
   const page = Math.max(1, parseInt(req.query.page) || 1);
