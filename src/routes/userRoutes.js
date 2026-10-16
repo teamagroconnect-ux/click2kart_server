@@ -155,23 +155,24 @@ router.post("/kyc/submit", auth, requireRole("customer"), async (req, res) => {
 
     user.approvalStatus = "pending";
 
-    // Auto-create/sync default address if not present
-    const addrString = `${addressLine1.trim()}, ${city.trim()}, ${state.trim()} - ${pincode.trim()}`;
-    if (!user.address) user.address = addrString;
+    // Set submitted address as default business address
+    const defaultBusinessAddr = {
+      fullName: user.name,
+      phone: user.phone,
+      addressLine1: addressLine1.trim(),
+      addressLine2: (addressLine2 || "").trim(),
+      city: city.trim(),
+      district: (district || city).trim(),
+      state: state.trim(),
+      pincode: pincode.trim(),
+      isDefault: true
+    };
 
-    if (!user.addresses || user.addresses.length === 0) {
-      user.addresses = [{
-        fullName: user.name,
-        phone: user.phone,
-        addressLine1: addressLine1.trim(),
-        addressLine2: (addressLine2 || "").trim(),
-        city: city.trim(),
-        district: (district || city).trim(),
-        state: state.trim(),
-        pincode: pincode.trim(),
-        isDefault: true
-      }];
-    }
+    user.address = `${addressLine1.trim()}${addressLine2 ? ', ' + addressLine2.trim() : ''}, ${city.trim()}, ${state.trim()} - ${pincode.trim()}`;
+
+    if (!user.addresses) user.addresses = [];
+    user.addresses.forEach(a => { a.isDefault = false; });
+    user.addresses.unshift(defaultBusinessAddr);
 
     await user.save();
 

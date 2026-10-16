@@ -478,20 +478,11 @@ router.get("/kyc/requests", auth, requirePermission("customers"), async (req, re
 
     if (status && status !== 'all') {
       if (status === 'PENDING') {
-        filter.$or = [
-          { 'kyc.status': 'PENDING_VERIFICATION' },
-          { approvalStatus: 'pending', 'kyc.businessName': { $exists: true, $ne: '' } }
-        ];
+        filter['kyc.status'] = 'PENDING_VERIFICATION';
       } else if (status === 'VERIFIED') {
-        filter.$or = [
-          { 'kyc.status': 'VERIFIED' },
-          { approvalStatus: 'approved' }
-        ];
+        filter['kyc.status'] = 'VERIFIED';
       } else if (status === 'REJECTED') {
-        filter.$or = [
-          { 'kyc.status': 'REJECTED' },
-          { approvalStatus: 'rejected' }
-        ];
+        filter['kyc.status'] = 'REJECTED';
       } else {
         filter['kyc.status'] = status;
       }
@@ -530,24 +521,9 @@ router.get("/kyc/requests", auth, requirePermission("customers"), async (req, re
       };
     }));
 
-    const pendingCount = await Customer.countDocuments({
-      $or: [
-        { 'kyc.status': 'PENDING_VERIFICATION' },
-        { approvalStatus: 'pending', 'kyc.businessName': { $exists: true, $ne: '' } }
-      ]
-    });
-    const verifiedCount = await Customer.countDocuments({
-      $or: [
-        { 'kyc.status': 'VERIFIED' },
-        { approvalStatus: 'approved' }
-      ]
-    });
-    const rejectedCount = await Customer.countDocuments({
-      $or: [
-        { 'kyc.status': 'REJECTED' },
-        { approvalStatus: 'rejected' }
-      ]
-    });
+    const pendingCount = await Customer.countDocuments({ 'kyc.status': 'PENDING_VERIFICATION' });
+    const verifiedCount = await Customer.countDocuments({ 'kyc.status': 'VERIFIED' });
+    const rejectedCount = await Customer.countDocuments({ 'kyc.status': 'REJECTED' });
 
     res.json({
       items: enriched,
@@ -564,7 +540,45 @@ router.get("/kyc/requests", auth, requirePermission("customers"), async (req, re
   }
 });
 
+// APPROVE SIGNUP REQUEST (Activates account, but does NOT approve KYC)
 router.post("/customers/:id/approve", auth, requirePermission("customers"), async (req, res) => {
+  const id = req.params.id;
+  const updated = await Customer.findByIdAndUpdate(
+    id, 
+    { 
+      isActive: true, 
+      approvalStatus: 'approved'
+    }, 
+    { new: true }
+  );
+  if (!updated) return res.status(404).json({ error: "not_found" });
+
+  if (updated.email) {
+    try {
+      const base =
+        (process.env.CLIENT_URL && process.env.CLIENT_URL.replace(/\/$/, "")) ||
+        (req.headers.origin && String(req.headers.origin).replace(/\/$/, "")) ||
+        "https://click2kart.net";
+      await sendEmail({
+        to: updated.email,
+        subject: `Partner Account Approved - ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        html: `
+          <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color:#059669;margin:0 0 12px;font-weight:800">Welcome, ${updated.name}!</h2>
+            <p style="color:#374151;line-height:1.6">Your partner account signup request has been approved by Click2Kart administration.</p>
+            <p style="color:#374151;line-height:1.6">Please sign in and complete your structured KYC verification to unlock ordering and wholesale billing.</p>
+            <a href="${base}/verify-kyc" style="display:inline-block;margin-top:12px;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Complete KYC Verification</a>
+            <p style="color:#6b7280;margin-top:24px;font-size:12px">&copy; ${new Date().getFullYear()} ${process.env.COMPANY_NAME || "Click2Kart"}</p>
+          </div>
+        `
+      });
+    } catch {}
+  }
+  res.json({ approved: true, customer: updated });
+});
+
+// DEDICATED KYC APPROVAL
+router.post("/customers/:id/approve-kyc", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
   const updated = await Customer.findByIdAndUpdate(
     id, 
@@ -591,17 +605,17 @@ router.post("/customers/:id/approve", auth, requirePermission("customers"), asyn
         "https://click2kart.net";
       await sendEmail({
         to: updated.email,
-        subject: `KYC & B2B Account Verified - ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        subject: `KYC & Partner Verified - ${process.env.COMPANY_NAME || "Click2Kart"}`,
         html: `
           <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
             <h2 style="color:#059669;margin:0 0 12px;font-weight:800">Congratulations, ${updated.name}!</h2>
-            <p style="color:#374151;line-height:1.6">Your KYC documents have been reviewed and approved by Click2Kart Compliance. Your retailer account is now verified and active with full wholesale access.</p>
+            <p style="color:#374151;line-height:1.6">Your KYC documents have been reviewed and approved by Click2Kart Compliance. Your partner account is now verified and active with full order access.</p>
             <div style="background:#f8fafc;padding:16px;border-radius:8px;margin:16px 0;font-size:13px;color:#334155">
               <div><b>Business Name:</b> ${updated.kyc?.businessName || updated.name}</div>
               ${updated.kyc?.gstin ? `<div><b>GSTIN:</b> ${updated.kyc.gstin}</div>` : ''}
               <div><b>Status:</b> <span style="color:#059669;font-weight:700">VERIFIED ✓</span></div>
             </div>
-            <a href="${base}/products" style="display:inline-block;margin-top:12px;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Explore Wholesale Catalogue</a>
+            <a href="${base}/products" style="display:inline-block;margin-top:12px;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Explore Product Catalogue</a>
             <p style="color:#6b7280;margin-top:24px;font-size:12px">&copy; ${new Date().getFullYear()} ${process.env.COMPANY_NAME || "Click2Kart"}</p>
           </div>
         `

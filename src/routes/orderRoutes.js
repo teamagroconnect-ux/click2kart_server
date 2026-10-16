@@ -381,7 +381,15 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     "name phone email isKycComplete kyc address isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings"
   );
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
-  if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+  if (!cust.isKycComplete || cust.kyc?.status !== "VERIFIED") {
+    return res.status(403).json({
+      error: "kyc_not_verified",
+      kycStatus: cust.kyc?.status || "NOT_SUBMITTED",
+      message: cust.kyc?.status === "PENDING_VERIFICATION"
+        ? "Wait for some time, your KYC details are in review. It will be verified soon."
+        : "Please complete your KYC verification before placing orders."
+    });
+  }
 
   // Credit and COD rules:
   if (cust.isCreditEnabled) {
@@ -636,6 +644,19 @@ router.post("/prepare-payment", auth, requireRole("customer"), async (req, res) 
   const { items, paymentMethod, couponCode, applyCredit } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   if (!["RAZORPAY", "COD_20"].includes(paymentMethod)) return res.status(400).json({ error: "invalid_payment_method" });
+
+  const custKyc = await Customer.findById(req.user.id).select("isKycComplete kyc");
+  if (!custKyc) return res.status(404).json({ error: "customer_not_found" });
+  if (!custKyc.isKycComplete || custKyc.kyc?.status !== "VERIFIED") {
+    return res.status(403).json({
+      error: "kyc_not_verified",
+      kycStatus: custKyc.kyc?.status || "NOT_SUBMITTED",
+      message: custKyc.kyc?.status === "PENDING_VERIFICATION"
+        ? "Wait for some time, your KYC details are in review. It will be verified soon."
+        : "Please complete your KYC verification before placing orders."
+    });
+  }
+
   try {
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
       return res.status(500).json({ error: "razorpay_not_configured" });
@@ -705,7 +726,15 @@ router.post("/create-after-verify", auth, requireRole("customer"), async (req, r
 
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address isCreditEnabled availableCredit creditLimit usedCredit outstandingBalance");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
-  if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+  if (!cust.isKycComplete || cust.kyc?.status !== "VERIFIED") {
+    return res.status(403).json({
+      error: "kyc_not_verified",
+      kycStatus: cust.kyc?.status || "NOT_SUBMITTED",
+      message: cust.kyc?.status === "PENDING_VERIFICATION"
+        ? "Wait for some time, your KYC details are in review. It will be verified soon."
+        : "Please complete your KYC verification before placing orders."
+    });
+  }
 
   try {
     const uniqueIds = [...new Set(items.map((x) => x.productId))];
@@ -989,7 +1018,15 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address deliverySettings isCreditEnabled availableCredit creditLimit usedCredit outstandingBalance");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
-  if (!cust.isKycComplete) return res.status(403).json({ error: "kyc_required" });
+  if (!cust.isKycComplete || cust.kyc?.status !== "VERIFIED") {
+    return res.status(403).json({
+      error: "kyc_not_verified",
+      kycStatus: cust.kyc?.status || "NOT_SUBMITTED",
+      message: cust.kyc?.status === "PENDING_VERIFICATION"
+        ? "Wait for some time, your KYC details are in review. It will be verified soon."
+        : "Please complete your KYC verification before placing orders."
+    });
+  }
   try {
     const ids = items.map((x) => x.productId);
     const products = await Product.find({ _id: { $in: ids }, isActive: true });
