@@ -474,31 +474,66 @@ router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => 
 router.get("/kyc/requests", auth, requirePermission("customers"), async (req, res) => {
   try {
     const { status, q } = req.query;
-    const filter = {};
+
+    const pendingCriteria = {
+      $or: [
+        { 'kyc.status': 'PENDING_VERIFICATION' },
+        {
+          isKycComplete: { $ne: true },
+          'kyc.status': { $nin: ['VERIFIED', 'REJECTED'] },
+          $or: [
+            { 'kyc.pan': { $exists: true, $nin: ['', null] } },
+            { 'kyc.panCard': { $exists: true, $nin: ['', null] } },
+            { 'kyc.aadhaarFront': { $exists: true, $nin: ['', null] } },
+            { 'kyc.aadhaarCard': { $exists: true, $nin: ['', null] } },
+            { 'kyc.aadhaarNumber': { $exists: true, $nin: ['', null] } },
+            { 'kyc.businessName': { $exists: true, $nin: ['', null] } },
+            { 'kyc.gstin': { $exists: true, $nin: ['', null] } }
+          ]
+        }
+      ]
+    };
+
+    const verifiedCriteria = {
+      $or: [
+        { 'kyc.status': 'VERIFIED' },
+        { isKycComplete: true }
+      ]
+    };
+
+    const rejectedCriteria = {
+      'kyc.status': 'REJECTED'
+    };
+
+    const andConditions = [];
 
     if (status && status !== 'all') {
       if (status === 'PENDING') {
-        filter['kyc.status'] = 'PENDING_VERIFICATION';
+        andConditions.push(pendingCriteria);
       } else if (status === 'VERIFIED') {
-        filter['kyc.status'] = 'VERIFIED';
+        andConditions.push(verifiedCriteria);
       } else if (status === 'REJECTED') {
-        filter['kyc.status'] = 'REJECTED';
+        andConditions.push(rejectedCriteria);
       } else {
-        filter['kyc.status'] = status;
+        andConditions.push({ 'kyc.status': status });
       }
     }
 
     if (q) {
-      filter.$or = [
-        { name: { $regex: String(q), $options: "i" } },
-        { phone: { $regex: String(q), $options: "i" } },
-        { email: { $regex: String(q), $options: "i" } },
-        { "kyc.businessName": { $regex: String(q), $options: "i" } },
-        { "kyc.pan": { $regex: String(q), $options: "i" } },
-        { "kyc.aadhaarNumber": { $regex: String(q), $options: "i" } },
-        { "kyc.gstin": { $regex: String(q), $options: "i" } }
-      ];
+      andConditions.push({
+        $or: [
+          { name: { $regex: String(q), $options: "i" } },
+          { phone: { $regex: String(q), $options: "i" } },
+          { email: { $regex: String(q), $options: "i" } },
+          { "kyc.businessName": { $regex: String(q), $options: "i" } },
+          { "kyc.pan": { $regex: String(q), $options: "i" } },
+          { "kyc.aadhaarNumber": { $regex: String(q), $options: "i" } },
+          { "kyc.gstin": { $regex: String(q), $options: "i" } }
+        ]
+      });
     }
+
+    const filter = andConditions.length > 0 ? { $and: andConditions } : {};
 
     const customers = await Customer.find(filter)
       .select("-password")
@@ -521,9 +556,12 @@ router.get("/kyc/requests", auth, requirePermission("customers"), async (req, re
       };
     }));
 
-    const pendingCount = await Customer.countDocuments({ 'kyc.status': 'PENDING_VERIFICATION' });
-    const verifiedCount = await Customer.countDocuments({ 'kyc.status': 'VERIFIED' });
-    const rejectedCount = await Customer.countDocuments({ 'kyc.status': 'REJECTED' });
+    const [pendingCount, verifiedCount, rejectedCount, totalCount] = await Promise.all([
+      Customer.countDocuments(pendingCriteria),
+      Customer.countDocuments(verifiedCriteria),
+      Customer.countDocuments(rejectedCriteria),
+      Customer.countDocuments({})
+    ]);
 
     res.json({
       items: enriched,
@@ -531,7 +569,7 @@ router.get("/kyc/requests", auth, requirePermission("customers"), async (req, re
         pending: pendingCount,
         verified: verifiedCount,
         rejected: rejectedCount,
-        total: customers.length
+        total: totalCount
       }
     });
   } catch (err) {
