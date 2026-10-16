@@ -22,7 +22,7 @@ const supportTicketSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['Order', 'Product', 'Payment', 'Return/Refund', 'Other'],
+    enum: ['Order', 'Product', 'Payment', 'Return/Refund', 'KYC/Profile', 'Other'],
     default: 'Other'
   },
   relatedOrder: {

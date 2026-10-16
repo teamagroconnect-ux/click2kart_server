@@ -111,9 +111,13 @@ router.post("/customer/verify-otp", async (req, res) => {
     phone,
     password,
     isVerified: true,
-    isActive: false,
+    isActive: true,
     approvalStatus: 'pending',
-    kyc: { partnerInviteCode: inviteCode || "" },
+    kyc: { 
+      partnerInviteCode: inviteCode || "",
+      status: 'NOT_SUBMITTED',
+      isLocked: false
+    },
     partnerId: partner ? partner._id : null
   });
 
@@ -128,7 +132,7 @@ router.post("/customer/verify-otp", async (req, res) => {
         html: `
           <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
             <h2 style="color:#111827;margin:0 0 12px;font-weight:800">New Retailer Verified OTP</h2>
-            <p style="color:#374151;line-height:1.6">A new user has completed verification and is awaiting approval.</p>
+            <p style="color:#374151;line-height:1.6">A new user has completed email verification and is proceeding to KYC.</p>
             <h3 style="color:#111827;margin:16px 0 8px;font-weight:700">Retailer Details</h3>
             <ul style="color:#111827;line-height:1.8;padding-left:18px">
               <li><b>Name:</b> ${customer.name}</li>
@@ -151,10 +155,26 @@ router.post("/customer/verify-otp", async (req, res) => {
     }
   } catch {}
 
-  // Do not auto-login; require admin approval before login
+  const token = jwt.sign(
+    { id: customer._id.toString(), role: "customer", email: customer.email },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
   res.json({
-    message: "application_submitted",
-    pendingApproval: true
+    message: "account_created",
+    token,
+    user: {
+      id: customer._id.toString(),
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      role: "customer",
+      isKycComplete: false,
+      approvalStatus: 'pending',
+      kyc: customer.kyc
+    },
+    redirectTo: "/verify-kyc"
   });
 });
 
@@ -166,7 +186,9 @@ router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req,
 
   const user = await Customer.findOne({ email: email.toLowerCase().trim() });
   if (!user) return res.status(404).json({ error: "user_not_found" });
-  if (!user.isActive) return res.status(403).json({ error: "account_pending_approval" });
+  if (user.isActive === false && user.approvalStatus !== 'pending' && user.approvalStatus !== 'rejected') {
+    return res.status(403).json({ error: "account_deactivated" });
+  }
 
   const ok = await user.comparePassword(password);
   if (!ok) return res.status(401).json({ error: "invalid_credentials" });
@@ -186,6 +208,7 @@ router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req,
       phone: user.phone,
       role: "customer", 
       isKycComplete: !!user.isKycComplete,
+      approvalStatus: user.approvalStatus || 'pending',
       kyc: user.kyc || {},
       isCreditEnabled: !!user.isCreditEnabled,
       creditLimit: user.creditLimit || 0,
@@ -193,7 +216,8 @@ router.post("/customer/login", rateLimit("customer-login", 10, 600), async (req,
       usedCredit: user.usedCredit || 0,
       outstandingBalance: user.outstandingBalance || 0,
       deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
-    }
+    },
+    redirectTo: (!user.isKycComplete || user.kyc?.status === 'NOT_SUBMITTED' || user.kyc?.status === 'REJECTED') ? '/verify-kyc' : null
   });
 });
 
@@ -273,7 +297,9 @@ router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 60
   if (!record) return res.status(400).json({ error: "invalid_otp" });
   const user = await Customer.findOne({ email: String(email).toLowerCase().trim() });
   if (!user) return res.status(404).json({ error: "user_not_found" });
-  if (!user.isActive) return res.status(403).json({ error: "account_pending_approval" });
+  if (!user.isActive && user.approvalStatus !== 'pending' && user.approvalStatus !== 'rejected') {
+    return res.status(403).json({ error: "account_deactivated" });
+  }
   await OTP.deleteOne({ _id: record._id });
   const token = jwt.sign(
     { id: user._id.toString(), role: "customer", email: user.email },
@@ -289,6 +315,7 @@ router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 60
       phone: user.phone,
       role: "customer", 
       isKycComplete: !!user.isKycComplete,
+      approvalStatus: user.approvalStatus || 'pending',
       kyc: user.kyc || {},
       isCreditEnabled: !!user.isCreditEnabled,
       creditLimit: user.creditLimit || 0,
@@ -296,7 +323,8 @@ router.post("/customer/login-otp/verify", rateLimit("customer-otp-verify", 5, 60
       usedCredit: user.usedCredit || 0,
       outstandingBalance: user.outstandingBalance || 0,
       deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
-    }
+    },
+    redirectTo: (!user.isKycComplete || user.kyc?.status === 'NOT_SUBMITTED' || user.kyc?.status === 'REJECTED') ? '/verify-kyc' : null
   });
 });
 

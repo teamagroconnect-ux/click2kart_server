@@ -471,10 +471,118 @@ router.delete("/customers/:id", auth, requireRole("admin"), async (req, res) => 
   res.json({ deleted: true });
 });
 
+router.get("/kyc/requests", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { status, q } = req.query;
+    const filter = {};
+
+    if (status && status !== 'all') {
+      if (status === 'PENDING') {
+        filter.$or = [
+          { 'kyc.status': 'PENDING_VERIFICATION' },
+          { approvalStatus: 'pending', 'kyc.businessName': { $exists: true, $ne: '' } }
+        ];
+      } else if (status === 'VERIFIED') {
+        filter.$or = [
+          { 'kyc.status': 'VERIFIED' },
+          { approvalStatus: 'approved' }
+        ];
+      } else if (status === 'REJECTED') {
+        filter.$or = [
+          { 'kyc.status': 'REJECTED' },
+          { approvalStatus: 'rejected' }
+        ];
+      } else {
+        filter['kyc.status'] = status;
+      }
+    }
+
+    if (q) {
+      filter.$or = [
+        { name: { $regex: String(q), $options: "i" } },
+        { phone: { $regex: String(q), $options: "i" } },
+        { email: { $regex: String(q), $options: "i" } },
+        { "kyc.businessName": { $regex: String(q), $options: "i" } },
+        { "kyc.pan": { $regex: String(q), $options: "i" } },
+        { "kyc.aadhaarNumber": { $regex: String(q), $options: "i" } },
+        { "kyc.gstin": { $regex: String(q), $options: "i" } }
+      ];
+    }
+
+    const customers = await Customer.find(filter)
+      .select("-password")
+      .sort({ 'kyc.submittedAt': -1, createdAt: -1 })
+      .lean();
+
+    const Order = (await import("../models/Order.js")).default;
+    const Partner = (await import("../models/Partner.js")).default;
+
+    const enriched = await Promise.all(customers.map(async (c) => {
+      const orderCount = await Order.countDocuments({ "customer.phone": c.phone });
+      let partner = null;
+      if (c.kyc?.partnerInviteCode) {
+        partner = await Partner.findOne({ inviteCode: c.kyc.partnerInviteCode }).select('name email phone inviteCode businessName').lean();
+      }
+      return {
+        ...c,
+        orderCount,
+        partner
+      };
+    }));
+
+    const pendingCount = await Customer.countDocuments({
+      $or: [
+        { 'kyc.status': 'PENDING_VERIFICATION' },
+        { approvalStatus: 'pending', 'kyc.businessName': { $exists: true, $ne: '' } }
+      ]
+    });
+    const verifiedCount = await Customer.countDocuments({
+      $or: [
+        { 'kyc.status': 'VERIFIED' },
+        { approvalStatus: 'approved' }
+      ]
+    });
+    const rejectedCount = await Customer.countDocuments({
+      $or: [
+        { 'kyc.status': 'REJECTED' },
+        { approvalStatus: 'rejected' }
+      ]
+    });
+
+    res.json({
+      items: enriched,
+      counts: {
+        pending: pendingCount,
+        verified: verifiedCount,
+        rejected: rejectedCount,
+        total: customers.length
+      }
+    });
+  } catch (err) {
+    console.error("Failed to load KYC requests:", err);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 router.post("/customers/:id/approve", auth, requirePermission("customers"), async (req, res) => {
   const id = req.params.id;
-  const updated = await Customer.findByIdAndUpdate(id, { isActive: true, approvalStatus: 'approved' }, { new: true });
+  const updated = await Customer.findByIdAndUpdate(
+    id, 
+    { 
+      isActive: true, 
+      approvalStatus: 'approved',
+      isVerified: true,
+      isKycComplete: true,
+      'kyc.status': 'VERIFIED',
+      'kyc.verifiedAt': new Date(),
+      'kyc.verifiedBy': req.user?.email || req.user?.name || 'Admin',
+      'kyc.isLocked': true,
+      'kyc.rejectionReason': ''
+    }, 
+    { new: true }
+  );
   if (!updated) return res.status(404).json({ error: "not_found" });
+
   if (updated.email) {
     try {
       const base =
@@ -483,12 +591,17 @@ router.post("/customers/:id/approve", auth, requirePermission("customers"), asyn
         "https://click2kart.net";
       await sendEmail({
         to: updated.email,
-        subject: `Welcome to ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        subject: `KYC & B2B Account Verified - ${process.env.COMPANY_NAME || "Click2Kart"}`,
         html: `
           <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #eee; border-radius: 12px;">
-            <h2 style="color:#111827;margin:0 0 12px;font-weight:800">Welcome, ${updated.name}!</h2>
-            <p style="color:#374151;line-height:1.6">Your B2B account has been approved. You can now sign in to view wholesale prices and place orders.</p>
-            <a href="${base}/login" style="display:inline-block;margin-top:16px;padding:12px 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Login Now</a>
+            <h2 style="color:#059669;margin:0 0 12px;font-weight:800">Congratulations, ${updated.name}!</h2>
+            <p style="color:#374151;line-height:1.6">Your KYC documents have been reviewed and approved by Click2Kart Compliance. Your retailer account is now verified and active with full wholesale access.</p>
+            <div style="background:#f8fafc;padding:16px;border-radius:8px;margin:16px 0;font-size:13px;color:#334155">
+              <div><b>Business Name:</b> ${updated.kyc?.businessName || updated.name}</div>
+              ${updated.kyc?.gstin ? `<div><b>GSTIN:</b> ${updated.kyc.gstin}</div>` : ''}
+              <div><b>Status:</b> <span style="color:#059669;font-weight:700">VERIFIED ✓</span></div>
+            </div>
+            <a href="${base}/products" style="display:inline-block;margin-top:12px;padding:12px 20px;background:#7c3aed;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Explore Wholesale Catalogue</a>
             <p style="color:#6b7280;margin-top:24px;font-size:12px">&copy; ${new Date().getFullYear()} ${process.env.COMPANY_NAME || "Click2Kart"}</p>
           </div>
         `
@@ -496,6 +609,50 @@ router.post("/customers/:id/approve", auth, requirePermission("customers"), asyn
     } catch {}
   }
   res.json({ approved: true, customer: updated });
+});
+
+router.post("/customers/:id/reject-kyc", auth, requirePermission("customers"), async (req, res) => {
+  const id = req.params.id;
+  const { reason } = req.body || {};
+  const rejectionReason = reason && reason.trim() ? reason.trim() : "Documents could not be verified. Please check and re-upload clear photos.";
+
+  const updated = await Customer.findByIdAndUpdate(
+    id,
+    {
+      approvalStatus: 'rejected',
+      'kyc.status': 'REJECTED',
+      'kyc.rejectionReason': rejectionReason,
+      'kyc.isLocked': false
+    },
+    { new: true }
+  );
+  if (!updated) return res.status(404).json({ error: "not_found" });
+
+  if (updated.email) {
+    try {
+      const base =
+        (process.env.CLIENT_URL && process.env.CLIENT_URL.replace(/\/$/, "")) ||
+        (req.headers.origin && String(req.headers.origin).replace(/\/$/, "")) ||
+        "https://click2kart.net";
+      await sendEmail({
+        to: updated.email,
+        subject: `KYC Document Revision Required - ${process.env.COMPANY_NAME || "Click2Kart"}`,
+        html: `
+          <div style="font-family: ui-sans-serif, system-ui; max-width: 560px; margin: auto; padding: 24px; border: 1px solid #fee2e2; border-radius: 12px;">
+            <h2 style="color:#dc2626;margin:0 0 12px;font-weight:800">KYC Verification Update</h2>
+            <p style="color:#374151;line-height:1.6">Dear ${updated.name}, your KYC documents could not be verified for the following reason:</p>
+            <div style="background:#fff1f2;border:1px solid #fecdd3;padding:14px;border-radius:8px;margin:16px 0;font-size:13px;color:#991b1b;font-weight:600">
+              Reason: ${rejectionReason}
+            </div>
+            <p style="color:#374151;line-height:1.6">Please log in to your account and re-upload the requested documents to complete your verification.</p>
+            <a href="${base}/verify-kyc" style="display:inline-block;margin-top:12px;padding:12px 20px;background:#dc2626;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">Re-submit Documents</a>
+          </div>
+        `
+      });
+    } catch {}
+  }
+
+  res.json({ rejected: true, customer: updated });
 });
 
 router.post("/customers/:id/skip", auth, requirePermission("customers"), async (req, res) => {

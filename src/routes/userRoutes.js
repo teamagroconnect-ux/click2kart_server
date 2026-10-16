@@ -43,27 +43,187 @@ router.get("/me", auth, async (req, res) => {
   });
 });
 
+router.get("/kyc", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const user = await Customer.findById(req.user.id).select(
+      "name email phone approvalStatus isKycComplete kyc"
+    );
+    if (!user) return res.status(404).json({ error: "not_found" });
+
+    return res.json({
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      approvalStatus: user.approvalStatus,
+      isKycComplete: !!user.isKycComplete,
+      kyc: user.kyc || {}
+    });
+  } catch (err) {
+    console.error("Failed to get KYC status:", err);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+// Customer KYC Full Submission Endpoint (Structured Single-Process Flow)
+router.post("/kyc/submit", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const user = await Customer.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "not_found" });
+
+    // Strict Lock Check: If already locked or under review/verified, do not accept re-submissions
+    if (user.kyc?.isLocked || ['PENDING_VERIFICATION', 'VERIFIED'].includes(user.kyc?.status)) {
+      return res.status(400).json({ 
+        error: "kyc_locked", 
+        message: "Your KYC documents are already submitted and locked for security. If you need any corrections, please raise a support ticket."
+      });
+    }
+
+    const {
+      businessName,
+      tradeName,
+      businessType,
+      gstin,
+      pan,
+      panCard,
+      aadhaarNumber,
+      aadhaarFront,
+      aadhaarBack,
+      addressLine1,
+      addressLine2,
+      city,
+      district,
+      state,
+      pincode
+    } = req.body || {};
+
+    if (!businessName || !businessName.trim()) {
+      return res.status(400).json({ error: "missing_business_name", message: "Business / Shop Name is required." });
+    }
+
+    const cleanPan = String(pan || "").trim().toUpperCase();
+    if (!cleanPan || !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan)) {
+      return res.status(400).json({ error: "invalid_pan", message: "A valid 10-character PAN number is required (e.g. ABCDE1234F)." });
+    }
+
+    if (!panCard || !panCard.trim()) {
+      return res.status(400).json({ error: "missing_pan_card", message: "PAN card document photo is required." });
+    }
+
+    const cleanAadhaar = String(aadhaarNumber || "").replace(/\D/g, "");
+    if (!cleanAadhaar || cleanAadhaar.length !== 12) {
+      return res.status(400).json({ error: "invalid_aadhaar", message: "A valid 12-digit Aadhaar number is required." });
+    }
+
+    if (!aadhaarFront || !aadhaarFront.trim()) {
+      return res.status(400).json({ error: "missing_aadhaar_front", message: "Aadhaar Card Front photo is required." });
+    }
+
+    if (!addressLine1 || !addressLine1.trim() || !city || !city.trim() || !state || !state.trim() || !pincode || !pincode.trim()) {
+      return res.status(400).json({ error: "missing_address", message: "Complete business address (Line 1, City, State, Pincode) is required." });
+    }
+
+    // Optional GSTIN format check if provided
+    const cleanGst = String(gstin || "").trim().toUpperCase();
+    if (cleanGst && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(cleanGst)) {
+      return res.status(400).json({ error: "invalid_gstin", message: "Invalid GSTIN format. Please enter a valid 15-character GSTIN or leave blank." });
+    }
+
+    // Assemble updated KYC object
+    user.kyc = {
+      ...(user.kyc || {}),
+      businessName: businessName.trim(),
+      tradeName: (tradeName || businessName).trim(),
+      businessType: businessType || "Retail Store",
+      gstin: cleanGst,
+      pan: cleanPan,
+      panCard: panCard.trim(),
+      aadhaarNumber: cleanAadhaar,
+      aadhaarCard: aadhaarFront.trim(),
+      aadhaarFront: aadhaarFront.trim(),
+      aadhaarBack: (aadhaarBack || "").trim(),
+      addressLine1: addressLine1.trim(),
+      addressLine2: (addressLine2 || "").trim(),
+      city: city.trim(),
+      district: (district || city).trim(),
+      state: state.trim(),
+      pincode: pincode.trim(),
+      status: "PENDING_VERIFICATION",
+      submittedAt: new Date(),
+      isLocked: true,
+      rejectionReason: ""
+    };
+
+    user.approvalStatus = "pending";
+
+    // Auto-create/sync default address if not present
+    const addrString = `${addressLine1.trim()}, ${city.trim()}, ${state.trim()} - ${pincode.trim()}`;
+    if (!user.address) user.address = addrString;
+
+    if (!user.addresses || user.addresses.length === 0) {
+      user.addresses = [{
+        fullName: user.name,
+        phone: user.phone,
+        addressLine1: addressLine1.trim(),
+        addressLine2: (addressLine2 || "").trim(),
+        city: city.trim(),
+        district: (district || city).trim(),
+        state: state.trim(),
+        pincode: pincode.trim(),
+        isDefault: true
+      }];
+    }
+
+    await user.save();
+
+    // Notify Admin via socket
+    try {
+      const { notifyAdmin } = await import("../lib/socket.js");
+      notifyAdmin("kyc_submission", {
+        userId: user._id,
+        name: user.name,
+        phone: user.phone,
+        businessName: user.kyc.businessName
+      });
+    } catch {}
+
+    return res.json({
+      success: true,
+      message: "KYC application submitted successfully and is now under verification.",
+      kyc: user.kyc
+    });
+  } catch (err) {
+    console.error("KYC submission failed:", err);
+    return res.status(500).json({ error: "server_error", message: "Failed to submit KYC. Please try again." });
+  }
+});
+
 router.put("/kyc", auth, requireRole("customer"), async (req, res) => {
   const payload = req.body || {};
   const user = await Customer.findById(req.user.id);
   if (!user) return res.status(404).json({ error: "not_found" });
 
-  const allowed = ["businessName", "gstin", "pan", "panCard", "aadhaarCard", "addressLine1", "addressLine2", "city", "district", "state", "pincode", "profilePicture"];
-  const restricted = ["businessName", "gstin", "pan"];
+  if (user.kyc?.isLocked || ['PENDING_VERIFICATION', 'VERIFIED'].includes(user.kyc?.status)) {
+    return res.status(400).json({ 
+      error: "kyc_locked", 
+      message: "KYC documents are locked. Please raise a support ticket to request updates." 
+    });
+  }
+
+  const allowed = ["businessName", "gstin", "pan", "panCard", "aadhaarNumber", "aadhaarCard", "aadhaarFront", "aadhaarBack", "addressLine1", "addressLine2", "city", "district", "state", "pincode", "profilePicture"];
+  const restricted = ["businessName", "gstin", "pan", "aadhaarNumber"];
   
   const kyc = { ...(user.kyc || {}) };
   
   for (const k of allowed) {
     if (typeof payload[k] === "string") {
       const value = payload[k].trim();
-      // Only allow updating if it was empty or if it's not a restricted field
       if (!restricted.includes(k) || !kyc[k]) {
         kyc[k] = value;
       }
     }
   }
 
-  const requiredFilled = (kyc.businessName && kyc.gstin && kyc.pan && kyc.addressLine1 && kyc.city && kyc.district && kyc.state && kyc.pincode);
+  const requiredFilled = (kyc.businessName && kyc.pan && kyc.panCard && kyc.aadhaarNumber && kyc.aadhaarFront && kyc.addressLine1 && kyc.city && kyc.state && kyc.pincode);
   
   user.kyc = kyc;
   user.isKycComplete = !!requiredFilled;
