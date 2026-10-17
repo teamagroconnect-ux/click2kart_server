@@ -195,6 +195,74 @@ test("Tenure validation: 12 months is REJECTED", () => {
   );
 });
 
+test("Configurable tenure validation: Every supported tenure (1 to 5 months) generates exact schedules in WEEKLY and DAILY", () => {
+  const supportedTenures = [1, 2, 3, 4, 5];
+  const expectedWeeklyInstalments = { 1: 4, 2: 9, 3: 13, 4: 17, 5: 22 };
+  const expectedDailyInstalments = { 1: 30, 2: 60, 3: 90, 4: 120, 5: 150 };
+  const principal = 100000;
+  const rate = 18;
+
+  for (const m of supportedTenures) {
+    // 1. Weekly schedule
+    const weeklySched = generateRepaymentSchedule({
+      principal,
+      annualRatePercent: rate,
+      tenureMonths: m,
+      frequency: "WEEKLY"
+    }, { permittedTenures: supportedTenures });
+
+    assert.strictEqual(
+      weeklySched.schedule.length,
+      expectedWeeklyInstalments[m],
+      `Tenure ${m} months must have ${expectedWeeklyInstalments[m]} weekly instalments`
+    );
+
+    const sumWeeklyPrincipal = weeklySched.schedule.reduce((acc, item) => acc + item.principalDue, 0);
+    assert.strictEqual(
+      Math.round(sumWeeklyPrincipal * 100) / 100,
+      principal,
+      `Weekly tenure ${m}: sum of principal (${sumWeeklyPrincipal}) must match principal (${principal})`
+    );
+
+    // 2. Daily schedule
+    const dailySched = generateRepaymentSchedule({
+      principal,
+      annualRatePercent: rate,
+      tenureMonths: m,
+      frequency: "DAILY"
+    }, { permittedTenures: supportedTenures });
+
+    assert.strictEqual(
+      dailySched.schedule.length,
+      expectedDailyInstalments[m],
+      `Tenure ${m} months must have ${expectedDailyInstalments[m]} daily instalments`
+    );
+
+    const sumDailyPrincipal = dailySched.schedule.reduce((acc, item) => acc + item.principalDue, 0);
+    assert.strictEqual(
+      Math.round(sumDailyPrincipal * 100) / 100,
+      principal,
+      `Daily tenure ${m}: sum of principal must match principal`
+    );
+  }
+
+  // 3. Reject tenures outside permitted [1, 2, 3, 4, 5]
+  for (const invalidTenure of [0, -1, 6, 7, 12]) {
+    assert.throws(
+      () => {
+        generateRepaymentSchedule({
+          principal: 50000,
+          annualRatePercent: 18,
+          tenureMonths: invalidTenure,
+          frequency: "WEEKLY"
+        }, { permittedTenures: supportedTenures });
+      },
+      /Invalid tenure/,
+      `Tenure ${invalidTenure} must be rejected outside permitted ${supportedTenures}`
+    );
+  }
+});
+
 // ----------------------------------------------------
 // 3. Amortization Schedule & estimatedInstalment Precision
 // ----------------------------------------------------

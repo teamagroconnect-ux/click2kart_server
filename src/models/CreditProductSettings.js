@@ -39,22 +39,28 @@ const creditProductSettingsSchema = new mongoose.Schema(
       default: 500000,
       min: 1000
     },
-    // Tenure in months (Strictly 3 to 5 months)
+    // Tenure in months (Configurable, default 1 to 5 months)
+    minTenureMonths: {
+      type: Number,
+      default: 1,
+      min: 1,
+      max: 12
+    },
     defaultTenureMonths: {
       type: Number,
       default: 3,
-      min: 3,
-      max: 5
+      min: 1,
+      max: 12
     },
     maxTenureMonths: {
       type: Number,
       default: 5,
-      min: 3,
-      max: 5
+      min: 1,
+      max: 12
     },
     permittedTenures: {
       type: [Number],
-      default: [3, 4, 5]
+      default: [1, 2, 3, 4, 5]
     },
     // Repayment frequency
     repaymentFrequency: {

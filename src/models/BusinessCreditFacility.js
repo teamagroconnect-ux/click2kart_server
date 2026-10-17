@@ -41,8 +41,8 @@ const businessCreditFacilitySchema = new mongoose.Schema(
     tenureMonths: {
       type: Number,
       required: true,
-      min: 3,
-      max: 5
+      min: 1,
+      max: 12
     },
     repaymentFrequency: {
       type: String,

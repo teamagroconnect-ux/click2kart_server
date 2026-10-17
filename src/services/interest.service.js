@@ -101,14 +101,25 @@ export function generateRepaymentSchedule({
   frequency = "WEEKLY",
   startDate = new Date(),
   dayCountConvention = "ACTUAL_365",
-  interestMethod = "DAILY_COMPOUNDING"
-}) {
+  interestMethod = "DAILY_COMPOUNDING",
+  permittedTenures,
+  minTenureMonths,
+  maxTenureMonths
+}, options = {}) {
   const p = Number(principal);
   const rate = Number(annualRatePercent);
   const tenure = parseInt(tenureMonths, 10);
 
-  if (tenure < 3 || tenure > 5) {
-    throw new Error(`Invalid tenure: ${tenure} months. Approved tenure must be strictly between 3 and 5 months.`);
+  const effectivePermitted = (options && options.permittedTenures) || permittedTenures;
+  const effectiveMin = (options && options.minTenureMonths !== undefined) ? options.minTenureMonths : minTenureMonths;
+  const effectiveMax = (options && options.maxTenureMonths !== undefined) ? options.maxTenureMonths : maxTenureMonths;
+
+  const allowedList = effectivePermitted && effectivePermitted.length > 0 ? effectivePermitted : null;
+  const minT = effectiveMin !== undefined ? effectiveMin : (allowedList ? Math.min(...allowedList) : 3);
+  const maxT = effectiveMax !== undefined ? effectiveMax : (allowedList ? Math.max(...allowedList) : 5);
+
+  if (allowedList ? !allowedList.includes(tenure) : (tenure < minT || tenure > maxT)) {
+    throw new Error(`Invalid tenure: ${tenure} months. Approved tenure must be strictly between ${minT} and ${maxT} months.`);
   }
 
   if (p <= 0) {
@@ -121,12 +132,15 @@ export function generateRepaymentSchedule({
 
   if (frequency === "WEEKLY") {
     intervalDays = 7;
-    if (tenure === 3) numInstalments = 13;
+    if (tenure === 1) numInstalments = 4;
+    else if (tenure === 2) numInstalments = 9;
+    else if (tenure === 3) numInstalments = 13;
     else if (tenure === 4) numInstalments = 17;
     else if (tenure === 5) numInstalments = 22;
+    else numInstalments = Math.max(1, Math.round((tenure * 30.4167) / 7));
   } else if (frequency === "DAILY") {
     intervalDays = 1;
-    numInstalments = tenure * 30; // 90, 120, or 150 days
+    numInstalments = tenure * 30; // 30 days per month
   } else {
     throw new Error(`Unsupported frequency: ${frequency}`);
   }

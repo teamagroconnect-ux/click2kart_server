@@ -27,9 +27,10 @@ export async function getProductSettings() {
       isApplicationAcceptanceEnabled: true,
       minAmount: 10000,
       maxAmount: 500000,
+      minTenureMonths: 1,
       defaultTenureMonths: 3,
       maxTenureMonths: 5,
-      permittedTenures: [3, 4, 5],
+      permittedTenures: [1, 2, 3, 4, 5],
       repaymentFrequency: "WEEKLY",
       interestRatePerAnnum: 18.0,
       interestMethod: "DAILY_COMPOUNDING",
@@ -97,6 +98,7 @@ export async function checkRetailerEligibility(retailerId) {
 
   return {
     eligible: reasons.length === 0,
+    isEligible: reasons.length === 0,
     reasons,
     customer: {
       _id: customer._id,
@@ -108,10 +110,15 @@ export async function checkRetailerEligibility(retailerId) {
     settings: {
       minAmount: settings.minAmount,
       maxAmount: settings.maxAmount,
-      permittedTenures: settings.permittedTenures,
-      defaultTenureMonths: settings.defaultTenureMonths,
+      permittedTenures: settings.permittedTenures && settings.permittedTenures.length > 0 ? settings.permittedTenures : [1, 2, 3, 4, 5],
+      defaultTenureMonths: settings.defaultTenureMonths || 3,
+      maxTenureMonths: settings.maxTenureMonths || 5,
       interestRatePerAnnum: settings.interestRatePerAnnum,
-      repaymentFrequency: settings.repaymentFrequency
+      interestMethod: settings.interestMethod,
+      repaymentFrequency: settings.repaymentFrequency,
+      processingFeeType: settings.processingFeeType,
+      processingFeeValue: settings.processingFeeValue,
+      processingFeeGstPercent: settings.processingFeeGstPercent
     },
     activeApplication: activeApp || null,
     activeFacility: activeFacility || null
@@ -142,9 +149,12 @@ export async function submitApplication({
     throw new Error(`Requested amount must be between ₹${settings.minAmount.toLocaleString("en-IN")} and ₹${settings.maxAmount.toLocaleString("en-IN")}.`);
   }
 
-  // Strict tenure validation: 3 to 5 months
-  if (!settings.permittedTenures.includes(tenure) || tenure < 3 || tenure > 5) {
-    throw new Error(`Tenure must be between 3 and 5 months (Supported: ${settings.permittedTenures.join(", ")} months).`);
+  // Permitted tenure validation
+  const allowedTenures = settings.permittedTenures && settings.permittedTenures.length > 0
+    ? settings.permittedTenures
+    : [1, 2, 3, 4, 5];
+  if (!allowedTenures.includes(tenure)) {
+    throw new Error(`Tenure must be one of the permitted durations: ${allowedTenures.join(", ")} months (Received: ${tenure}).`);
   }
 
   if (!purpose || !String(purpose).trim()) {
@@ -236,9 +246,12 @@ export async function adminReviewApplication({
   const rate = Number(interestRate !== undefined ? interestRate : settings.interestRatePerAnnum);
   const freq = repaymentFrequency || settings.repaymentFrequency || "WEEKLY";
 
-  // Strict backend validation: 3 to 5 months
-  if (finalTenure < 3 || finalTenure > 5) {
-    throw new Error(`Approved tenure must be strictly between 3 and 5 months (Received: ${finalTenure}).`);
+  // Permitted tenure validation
+  const allowedTenures = settings.permittedTenures && settings.permittedTenures.length > 0
+    ? settings.permittedTenures
+    : [1, 2, 3, 4, 5];
+  if (!allowedTenures.includes(finalTenure)) {
+    throw new Error(`Approved tenure must be one of the permitted durations: ${allowedTenures.join(", ")} months (Received: ${finalTenure}).`);
   }
 
   if (finalAmount <= 0 || finalAmount > settings.maxAmount) {
@@ -259,7 +272,8 @@ export async function adminReviewApplication({
     tenureMonths: finalTenure,
     frequency: freq,
     startDate: new Date(),
-    dayCountConvention: settings.dayCountConvention
+    dayCountConvention: settings.dayCountConvention,
+    permittedTenures: allowedTenures
   });
 
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // Offer valid for 7 days
@@ -332,9 +346,12 @@ export async function adminProactiveGrant({
   const rate = Number(interestRate !== undefined ? interestRate : settings.interestRatePerAnnum);
   const freq = repaymentFrequency || "WEEKLY";
 
-  // Strict tenure validation: 3 to 5 months
-  if (finalTenure < 3 || finalTenure > 5) {
-    throw new Error(`Tenure must be strictly between 3 and 5 months (Received: ${finalTenure}).`);
+  // Permitted tenure validation
+  const allowedTenures = settings.permittedTenures && settings.permittedTenures.length > 0
+    ? settings.permittedTenures
+    : [1, 2, 3, 4, 5];
+  if (!allowedTenures.includes(finalTenure)) {
+    throw new Error(`Tenure must be one of the permitted durations: ${allowedTenures.join(", ")} months (Received: ${finalTenure}).`);
   }
 
   const feeCalc = calculateProcessingFee({
@@ -350,7 +367,8 @@ export async function adminProactiveGrant({
     tenureMonths: finalTenure,
     frequency: freq,
     startDate: new Date(),
-    dayCountConvention: settings.dayCountConvention
+    dayCountConvention: settings.dayCountConvention,
+    permittedTenures: allowedTenures
   });
 
   const dateStr = getBusinessDateString().replace(/-/g, "");
@@ -472,7 +490,8 @@ export async function confirmDisbursement({
     tenureMonths: offer.approvedTenureMonths,
     frequency: offer.repaymentFrequency || "WEEKLY",
     startDate: disbDate,
-    dayCountConvention: settings.dayCountConvention
+    dayCountConvention: settings.dayCountConvention,
+    permittedTenures: settings.permittedTenures && settings.permittedTenures.length > 0 ? settings.permittedTenures : [1, 2, 3, 4, 5]
   });
 
   // Create BusinessCreditFacility

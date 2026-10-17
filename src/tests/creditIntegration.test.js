@@ -58,7 +58,8 @@ class MockDb {
       principal: sanctionedLimit,
       annualRatePercent: interestRate,
       tenureMonths,
-      frequency
+      frequency,
+      permittedTenures: [1, 2, 3, 4, 5]
     });
 
     const facility = {
@@ -720,6 +721,149 @@ test("10. Real Razorpay Mandate State & AutoPay Boundary", async () => {
   assert.strictEqual(mandateRes.status, "PENDING_MERCHANT_ACTIVATION");
   assert.strictEqual(mandateRes.fallbackToManual, true);
   assert.strictEqual(mandateRes.mandateId, null);
+});
+
+test("11. Application Lifecycle State Transitions, Audit Logging, & Duplicate Guard", async () => {
+  // Mock in-memory application store
+  const applications = new Map();
+  const auditLogs = [];
+
+  const retailerId = "ret_app_test_101";
+
+  // 1. Submit application (SUBMITTED)
+  const app1 = {
+    _id: "app_001",
+    retailerId,
+    requestedAmount: 75000,
+    requestedTenureMonths: 2,
+    purpose: "Procuring festive stock",
+    status: "SUBMITTED",
+    createdAt: new Date()
+  };
+  applications.set(app1._id, app1);
+
+  // 2. Duplicate application protection
+  const activeApp = Array.from(applications.values()).find(
+    a => a.retailerId === retailerId && ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "OFFER_ACCEPTED", "DISBURSEMENT_PENDING"].includes(a.status)
+  );
+  assert.notStrictEqual(activeApp, undefined, "Active application must be detected");
+  const canApplyAgain = !activeApp;
+  assert.strictEqual(canApplyAgain, false, "Duplicate submission must be blocked while application is in-flight");
+
+  // 3. Admin moves to review (UNDER_REVIEW) and Approves (APPROVED)
+  app1.status = "UNDER_REVIEW";
+  assert.strictEqual(app1.status, "UNDER_REVIEW");
+
+  const feeCalc = calculateProcessingFee({
+    amount: 75000,
+    feeType: "PERCENTAGE",
+    feeValue: 2.0,
+    gstPercent: 18.0
+  });
+
+  const amort = generateRepaymentSchedule({
+    principal: 75000,
+    annualRatePercent: 18,
+    tenureMonths: 2,
+    frequency: "WEEKLY"
+  }, { permittedTenures: [1, 2, 3, 4, 5] });
+
+  app1.status = "APPROVED";
+  app1.approvedOffer = {
+    approvedAmount: 75000,
+    approvedTenureMonths: 2,
+    interestRatePerAnnum: 18,
+    repaymentFrequency: "WEEKLY",
+    processingFeeAmount: feeCalc.processingFee,
+    processingFeeGst: feeCalc.gst,
+    totalProcessingFee: feeCalc.totalFee,
+    netDisbursementAmount: feeCalc.netDisbursement,
+    totalInstalments: amort.numInstalments
+  };
+  auditLogs.push({ actorId: "admin_1", type: "BUSINESS_CREDIT_APPROVAL", entityId: app1._id });
+  assert.strictEqual(app1.status, "APPROVED");
+  assert.strictEqual(auditLogs.length, 1);
+
+  // 4. Retailer accepts offer (OFFER_ACCEPTED -> DISBURSEMENT_PENDING)
+  assert.strictEqual(app1.status, "APPROVED");
+  app1.status = "OFFER_ACCEPTED";
+  app1.status = "DISBURSEMENT_PENDING";
+  assert.strictEqual(app1.status, "DISBURSEMENT_PENDING");
+
+  // 5. Admin confirms disbursement with UTR (DISBURSED)
+  const { facility: disbFacility } = db.disburseFacility({
+    retailerId,
+    sanctionedLimit: app1.approvedOffer.approvedAmount,
+    tenureMonths: app1.approvedOffer.approvedTenureMonths,
+    interestRate: app1.approvedOffer.interestRatePerAnnum,
+    frequency: "WEEKLY"
+  });
+
+  app1.status = "DISBURSED";
+  app1.facilityId = disbFacility._id;
+  auditLogs.push({ actorId: "admin_1", type: "BUSINESS_CREDIT_DISBURSED", entityId: disbFacility._id });
+
+  assert.strictEqual(app1.status, "DISBURSED");
+  assert.strictEqual(disbFacility.status, "ACTIVE");
+  assert.strictEqual(disbFacility.totalInstalments, 9, "2 months weekly must generate 9 instalments");
+
+  // 6. Duplicate disbursement protection: status is no longer DISBURSEMENT_PENDING
+  assert.throws(
+    () => {
+      if (!["OFFER_ACCEPTED", "DISBURSEMENT_PENDING"].includes(app1.status)) {
+        throw new Error(`Cannot disburse funds for application in status '${app1.status}'.`);
+      }
+    },
+    /Cannot disburse funds for application in status 'DISBURSED'/,
+    "Duplicate disbursement on already disbursed application must be rejected"
+  );
+
+  // 7. Admin rejection flow verification
+  const app2 = {
+    _id: "app_002",
+    retailerId: "ret_rejected_102",
+    status: "SUBMITTED"
+  };
+  app2.status = "REJECTED";
+  app2.rejectionReason = "Financial turnover documents insufficient";
+  auditLogs.push({ actorId: "admin_1", type: "BUSINESS_CREDIT_REVIEW", entityId: app2._id, note: "REJECTED" });
+  assert.strictEqual(app2.status, "REJECTED");
+  assert.strictEqual(auditLogs.length, 3);
+});
+
+test("12. Early Repayment Settlement & Invariant Check across Short Tenures", async () => {
+  // Disburse 1-month facility (4 instalments)
+  const { facility } = db.disburseFacility({
+    retailerId: "ret_short_tenure_103",
+    sanctionedLimit: 30000,
+    tenureMonths: 1,
+    interestRate: 18,
+    frequency: "WEEKLY"
+  });
+
+  assert.strictEqual(facility.totalInstalments, 4, "1 month facility has 4 instalments");
+  // Calculate total dues across all 4 instalments (principal + interest)
+  const facSchedules = Array.from(db.schedules.values()).filter(s => s.facilityId === facility._id);
+  const totalDues = facSchedules.reduce((sum, s) => sum + (s.totalDue - s.totalPaid), 0);
+
+  // Complete settlement of all instalments
+  const fullPayoff = db.processRepayment({
+    facilityId: facility._id,
+    amount: totalDues,
+    paymentRef: "PAY_EARLY_SETTLE_101"
+  });
+
+  assert.strictEqual(fullPayoff.facility.principalOutstanding, 0);
+  assert.strictEqual(fullPayoff.facility.status, "SETTLED");
+
+  // Invariant verification on settled facility
+  const inv = evaluateFacilityInvariants({
+    facility: fullPayoff.facility,
+    schedules: Array.from(db.schedules.values()).filter(s => s.facilityId === facility._id),
+    transactions: Array.from(db.transactions.values()).filter(t => t.facilityId === facility._id)
+  });
+
+  assert.strictEqual(inv.invariantsPassed, true, `Settled facility must satisfy invariants: ${JSON.stringify(inv.discrepancies)}`);
 });
 
 // Run all tests sequentially

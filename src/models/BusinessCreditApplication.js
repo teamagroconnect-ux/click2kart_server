@@ -27,8 +27,8 @@ const businessCreditApplicationSchema = new mongoose.Schema(
     requestedTenureMonths: {
       type: Number,
       required: true,
-      min: 3,
-      max: 5
+      min: 1,
+      max: 12
     },
     businessDetails: {
       shopName: { type: String, trim: true },
@@ -96,7 +96,7 @@ const businessCreditApplicationSchema = new mongoose.Schema(
     // Approved financial terms snapshot (locked once approved)
     approvedOffer: {
       approvedAmount: { type: Number, default: 0 },
-      approvedTenureMonths: { type: Number, min: 3, max: 5 },
+      approvedTenureMonths: { type: Number, min: 1, max: 12 },
       interestRatePerAnnum: { type: Number, default: 18.0 },
       interestMethod: { type: String, default: "DAILY_COMPOUNDING" },
       repaymentFrequency: { type: String, enum: ["WEEKLY", "DAILY"], default: "WEEKLY" },

@@ -1025,44 +1025,56 @@ router.put("/admin/business/settings", auth, requirePermission("customers"), asy
   try {
     const {
       isProductEnabled,
+      isEnabled,
       defaultAnnualInterestRatePercent,
+      interestRatePerAnnum,
       minAnnualInterestRatePercent,
       maxAnnualInterestRatePercent,
       defaultTenureMonths,
       minTenureMonths,
       maxTenureMonths,
+      permittedTenures,
       processingFeePercent,
+      processingFeeValue,
       minCreditLimit,
-      maxCreditLimit
+      minAmount,
+      maxCreditLimit,
+      maxAmount
     } = req.body || {};
 
     const settings = await getProductSettings();
 
-    if (isProductEnabled !== undefined) settings.isProductEnabled = Boolean(isProductEnabled);
-    if (defaultAnnualInterestRatePercent !== undefined) settings.defaultAnnualInterestRatePercent = Number(defaultAnnualInterestRatePercent);
-    if (minAnnualInterestRatePercent !== undefined) settings.minAnnualInterestRatePercent = Number(minAnnualInterestRatePercent);
-    if (maxAnnualInterestRatePercent !== undefined) settings.maxAnnualInterestRatePercent = Number(maxAnnualInterestRatePercent);
+    if (isProductEnabled !== undefined) settings.isEnabled = Boolean(isProductEnabled);
+    if (isEnabled !== undefined) settings.isEnabled = Boolean(isEnabled);
+    if (defaultAnnualInterestRatePercent !== undefined) settings.interestRatePerAnnum = Number(defaultAnnualInterestRatePercent);
+    if (interestRatePerAnnum !== undefined) settings.interestRatePerAnnum = Number(interestRatePerAnnum);
     
-    // Strict tenure validation: between 3 and 5 months
-    if (defaultTenureMonths !== undefined) {
-      const t = Number(defaultTenureMonths);
-      if (t < 3 || t > 5) return res.status(400).json({ error: "invalid_tenure", message: "Tenure must be between 3 and 5 months." });
-      settings.defaultTenureMonths = t;
-    }
+    // Configurable tenure validation
     if (minTenureMonths !== undefined) {
       const t = Number(minTenureMonths);
-      if (t < 3 || t > 5) return res.status(400).json({ error: "invalid_min_tenure", message: "Minimum tenure must be >= 3 months." });
+      if (t < 1 || t > 12) return res.status(400).json({ error: "invalid_min_tenure", message: "Minimum tenure must be between 1 and 12 months." });
       settings.minTenureMonths = t;
     }
     if (maxTenureMonths !== undefined) {
       const t = Number(maxTenureMonths);
-      if (t < 3 || t > 5) return res.status(400).json({ error: "invalid_max_tenure", message: "Maximum tenure must be <= 5 months." });
+      if (t < 1 || t > 12) return res.status(400).json({ error: "invalid_max_tenure", message: "Maximum tenure must be between 1 and 12 months." });
       settings.maxTenureMonths = t;
     }
+    if (defaultTenureMonths !== undefined) {
+      const t = Number(defaultTenureMonths);
+      if (t < 1 || t > 12) return res.status(400).json({ error: "invalid_tenure", message: "Default tenure must be between 1 and 12 months." });
+      settings.defaultTenureMonths = t;
+    }
+    if (permittedTenures !== undefined && Array.isArray(permittedTenures)) {
+      settings.permittedTenures = permittedTenures.map(Number).filter(n => n >= 1 && n <= 12);
+    }
 
-    if (processingFeePercent !== undefined) settings.processingFeePercent = Number(processingFeePercent);
-    if (minCreditLimit !== undefined) settings.minCreditLimit = Number(minCreditLimit);
-    if (maxCreditLimit !== undefined) settings.maxCreditLimit = Number(maxCreditLimit);
+    if (processingFeePercent !== undefined) settings.processingFeeValue = Number(processingFeePercent);
+    if (processingFeeValue !== undefined) settings.processingFeeValue = Number(processingFeeValue);
+    if (minCreditLimit !== undefined) settings.minAmount = Number(minCreditLimit);
+    if (minAmount !== undefined) settings.minAmount = Number(minAmount);
+    if (maxCreditLimit !== undefined) settings.maxAmount = Number(maxCreditLimit);
+    if (maxAmount !== undefined) settings.maxAmount = Number(maxAmount);
 
     await settings.save();
 
@@ -1125,25 +1137,41 @@ router.get("/admin/business/applications", auth, requirePermission("customers"),
  */
 router.post("/admin/business/applications/:id/review", auth, requirePermission("customers"), async (req, res) => {
   try {
-    const { action, approvedLimit, approvedTenureMonths, approvedFrequency, annualInterestRatePercent, processingFeePercent, rejectionReason, remarks } = req.body || {};
+    const {
+      action,
+      approvedLimit,
+      approvedAmount,
+      approvedTenureMonths,
+      approvedFrequency,
+      repaymentFrequency,
+      annualInterestRatePercent,
+      interestRate,
+      processingFeePercent,
+      processingFeeValue,
+      processingFeeType,
+      rejectionReason,
+      remarks,
+      adminNotes
+    } = req.body || {};
 
     const updatedApp = await adminReviewApplication({
       applicationId: req.params.id,
+      adminId: req.user?._id || req.user?.id,
+      adminName: req.user?.name || "Admin",
       action,
-      reviewedByAdminId: req.user.id,
-      reviewedByAdminName: req.user.name || "Admin",
-      approvedLimit,
+      approvedAmount: approvedAmount !== undefined ? approvedAmount : approvedLimit,
       approvedTenureMonths,
-      approvedFrequency,
-      annualInterestRatePercent,
-      processingFeePercent,
-      rejectionReason,
-      remarks
+      interestRate: interestRate !== undefined ? interestRate : annualInterestRatePercent,
+      processingFeeType: processingFeeType || "PERCENTAGE",
+      processingFeeValue: processingFeeValue !== undefined ? processingFeeValue : processingFeePercent,
+      repaymentFrequency: repaymentFrequency || approvedFrequency,
+      adminNotes: adminNotes || remarks,
+      rejectionReason
     });
 
     res.json({
       success: true,
-      message: `application_${action.toLowerCase()}`,
+      message: `application_${String(action || "").toLowerCase()}`,
       application: updatedApp
     });
   } catch (err) {
@@ -1157,19 +1185,34 @@ router.post("/admin/business/applications/:id/review", auth, requirePermission("
  */
 router.post("/admin/business/proactive-grant", auth, requirePermission("customers"), async (req, res) => {
   try {
-    const { retailerId, approvedLimit, approvedTenureMonths, approvedFrequency, annualInterestRatePercent, processingFeePercent, purpose, remarks } = req.body || {};
+    const {
+      retailerId,
+      approvedLimit,
+      approvedAmount,
+      approvedTenureMonths,
+      approvedFrequency,
+      repaymentFrequency,
+      annualInterestRatePercent,
+      interestRate,
+      processingFeePercent,
+      processingFeeValue,
+      purpose,
+      reason,
+      remarks,
+      adminNotes
+    } = req.body || {};
 
     const application = await adminProactiveGrant({
       retailerId,
-      approvedLimit,
+      adminId: req.user?._id || req.user?.id,
+      adminName: req.user?.name || "Admin",
+      approvedAmount: approvedAmount !== undefined ? approvedAmount : approvedLimit,
       approvedTenureMonths,
-      approvedFrequency,
-      annualInterestRatePercent,
-      processingFeePercent,
-      purpose,
-      remarks,
-      reviewedByAdminId: req.user.id,
-      reviewedByAdminName: req.user.name || "Admin"
+      interestRate: interestRate !== undefined ? interestRate : annualInterestRatePercent,
+      processingFeeValue: processingFeeValue !== undefined ? processingFeeValue : processingFeePercent,
+      repaymentFrequency: repaymentFrequency || approvedFrequency,
+      reason: reason || purpose,
+      adminNotes: adminNotes || remarks
     });
 
     res.status(201).json({
@@ -1188,15 +1231,32 @@ router.post("/admin/business/proactive-grant", auth, requirePermission("customer
  */
 router.post("/admin/business/applications/:id/disburse", auth, requirePermission("customers"), async (req, res) => {
   try {
-    const { bankTransferReference, disbursementMode, remarks } = req.body || {};
+    const {
+      bankTransferReference,
+      utr,
+      disbursementMode,
+      method,
+      remarks,
+      notes,
+      accountHolder,
+      accountNumber,
+      ifsc,
+      bankName,
+      disbursementDate
+    } = req.body || {};
 
     const result = await confirmDisbursement({
       applicationId: req.params.id,
-      disbursedByAdminId: req.user.id,
-      disbursedByAdminName: req.user.name || "Admin",
-      bankTransferReference,
-      disbursementMode,
-      remarks
+      adminId: req.user?._id || req.user?.id,
+      adminName: req.user?.name || "Admin",
+      utr: utr || bankTransferReference,
+      method: method || disbursementMode || "BANK_TRANSFER",
+      accountHolder,
+      accountNumber,
+      ifsc,
+      bankName,
+      notes: notes || remarks,
+      disbursementDate
     });
 
     res.json({
