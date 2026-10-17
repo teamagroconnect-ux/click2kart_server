@@ -16,6 +16,33 @@ import {
 import { runReconciliation } from "../services/reconciliation.service.js";
 import { sendEmail, renderMail } from "../lib/mailer.js";
 
+// Business Credit Line Models and Services
+import BusinessCreditApplication from "../models/BusinessCreditApplication.js";
+import BusinessCreditFacility from "../models/BusinessCreditFacility.js";
+import BusinessCreditSchedule from "../models/BusinessCreditSchedule.js";
+import BusinessCreditTransaction from "../models/BusinessCreditTransaction.js";
+import CreditProductSettings from "../models/CreditProductSettings.js";
+import {
+  getProductSettings,
+  checkRetailerEligibility,
+  submitApplication,
+  adminReviewApplication,
+  adminProactiveGrant,
+  acceptOffer,
+  confirmDisbursement,
+  processBusinessRepayment,
+  reverseBusinessRepayment,
+  accrueDailyInterestForActiveFacilities,
+  verifyFacilityInvariants,
+  reconcileFacilityInvariants
+} from "../services/businessCredit.service.js";
+import {
+  createAutoPayMandateOrder,
+  verifyAutoPayWebhookSignature,
+  handleAutoPayWebhookEvent
+} from "../services/autopay.service.js";
+import { generateBureauReport } from "../services/creditBureau.service.js";
+
 const router = express.Router();
 
 // ==========================================
@@ -273,6 +300,320 @@ router.post("/me/repay/bank-transfer", auth, requireRole("customer"), async (req
   } catch (err) {
     console.error("POST /me/repay/bank-transfer error:", err);
     res.status(500).json({ error: "failed_to_submit_repayment" });
+  }
+});
+
+// ==========================================
+// RETAILER BUSINESS CREDIT LINE ENDPOINTS
+// ==========================================
+
+/**
+ * Check retailer eligibility for Business Credit Line
+ */
+router.get("/business/eligibility", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const eligibility = await checkRetailerEligibility(req.user.id);
+    res.json(eligibility);
+  } catch (err) {
+    console.error("GET /business/eligibility error:", err);
+    res.status(500).json({ error: "failed_to_check_eligibility", message: err.message });
+  }
+});
+
+/**
+ * Retailer submits Business Credit Line application
+ */
+router.post("/business/apply", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const { requestedAmount, purpose, requestedTenureMonths, requestedFrequency } = req.body || {};
+
+    const application = await submitApplication({
+      retailerId: req.user.id,
+      requestedAmount,
+      purpose,
+      requestedTenureMonths,
+      requestedFrequency
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "business_credit_application_submitted",
+      application
+    });
+  } catch (err) {
+    console.error("POST /business/apply error:", err);
+    res.status(400).json({ error: "application_submission_failed", message: err.message });
+  }
+});
+
+/**
+ * Retailer retrieves their Business Credit applications
+ */
+router.get("/business/my-applications", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const applications = await BusinessCreditApplication.find({ retailerId: req.user.id }).sort({ createdAt: -1 });
+    res.json({ applications });
+  } catch (err) {
+    console.error("GET /business/my-applications error:", err);
+    res.status(500).json({ error: "failed_to_fetch_applications", message: err.message });
+  }
+});
+
+/**
+ * Retailer retrieves active Business Credit facilities, schedules, and transactions
+ */
+router.get("/business/my-facilities", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const facilities = await BusinessCreditFacility.find({ retailerId: req.user.id }).sort({ createdAt: -1 });
+
+    const facilityDetails = await Promise.all(
+      facilities.map(async fac => {
+        const [schedules, recentTransactions] = await Promise.all([
+          BusinessCreditSchedule.find({ facilityId: fac._id }).sort({ instalmentNumber: 1 }),
+          BusinessCreditTransaction.find({ facilityId: fac._id }).sort({ createdAt: -1 }).limit(25)
+        ]);
+
+        return {
+          ...fac.toObject(),
+          schedules,
+          recentTransactions
+        };
+      })
+    );
+
+    res.json({ facilities: facilityDetails });
+  } catch (err) {
+    console.error("GET /business/my-facilities error:", err);
+    res.status(500).json({ error: "failed_to_fetch_facilities", message: err.message });
+  }
+});
+
+/**
+ * Retailer accepts an approved or proactive Business Credit offer
+ */
+router.post("/business/accept-offer/:id", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const ipAddress = req.ip || req.headers["x-forwarded-for"] || "127.0.0.1";
+    const userAgent = req.headers["user-agent"] || "Web Browser";
+
+    const result = await acceptOffer({
+      applicationId: req.params.id,
+      retailerId: req.user.id,
+      ipAddress,
+      userAgent
+    });
+
+    res.json({
+      success: true,
+      message: "business_credit_offer_accepted",
+      application: result.application,
+      facility: result.facility
+    });
+  } catch (err) {
+    console.error("POST /business/accept-offer error:", err);
+    res.status(400).json({ error: "offer_acceptance_failed", message: err.message });
+  }
+});
+
+/**
+ * Initiate Razorpay Repayment for Business Credit Facility
+ */
+router.post("/business/repay/razorpay-init", auth, requireRole("customer"), async (req, res) => {
+  const { facilityId, amount } = req.body || {};
+  const numAmount = Number(amount);
+
+  if (!facilityId) return res.status(400).json({ error: "facility_id_required" });
+  if (!numAmount || numAmount <= 0) return res.status(400).json({ error: "invalid_amount" });
+
+  try {
+    const facility = await BusinessCreditFacility.findOne({ _id: facilityId, retailerId: req.user.id });
+    if (!facility) return res.status(404).json({ error: "facility_not_found" });
+
+    if (facility.status === "CLOSED") {
+      return res.status(400).json({ error: "facility_already_closed", message: "This facility has already been fully paid off." });
+    }
+
+    if (numAmount > facility.totalPayable) {
+      return res.status(400).json({
+        error: "amount_exceeds_total_payable",
+        message: `Amount ₹${numAmount} exceeds remaining total payable ₹${facility.totalPayable}`
+      });
+    }
+
+    const options = {
+      amount: Math.round(numAmount * 100), // paise
+      currency: "INR",
+      receipt: `bcrep_${facility.facilityNumber.slice(-6)}_${Date.now()}`.slice(0, 40),
+      notes: {
+        type: "BUSINESS_CREDIT_REPAYMENT",
+        facilityId: facility._id.toString(),
+        facilityNumber: facility.facilityNumber,
+        retailerId: req.user.id
+      }
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    res.json({
+      success: true,
+      order,
+      facility: {
+        _id: facility._id,
+        facilityNumber: facility.facilityNumber,
+        totalPayable: facility.totalPayable
+      },
+      key: process.env.RAZORPAY_KEY_ID
+    });
+  } catch (err) {
+    console.error("POST /business/repay/razorpay-init error:", err);
+    res.status(500).json({ error: "failed_to_initiate_repayment", message: err.message });
+  }
+});
+
+/**
+ * Verify Razorpay Repayment for Business Credit Facility
+ */
+router.post("/business/repay/razorpay-verify", auth, requireRole("customer"), async (req, res) => {
+  const { facilityId, razorpay_order_id, razorpay_payment_id, razorpay_signature, amount } = req.body || {};
+
+  if (!facilityId || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return res.status(400).json({ error: "missing_payment_verification_parameters" });
+  }
+
+  // Cryptographic signature check
+  const body = razorpay_order_id + "|" + razorpay_payment_id;
+  const expectedSignature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(body.toString())
+    .digest("hex");
+
+  if (expectedSignature !== razorpay_signature) {
+    return res.status(400).json({ error: "invalid_signature", message: "Razorpay payment verification failed" });
+  }
+
+  try {
+    const facility = await BusinessCreditFacility.findOne({ _id: facilityId, retailerId: req.user.id });
+    if (!facility) return res.status(404).json({ error: "facility_not_found" });
+
+    const result = await processBusinessRepayment({
+      facilityId: facility._id,
+      amount: Number(amount),
+      paymentMode: "RAZORPAY",
+      paymentReference: razorpay_payment_id,
+      notes: `Razorpay Online Repayment (Order: ${razorpay_order_id})`,
+      razorpayPaymentId: razorpay_payment_id,
+      razorpayOrderId: razorpay_order_id,
+      razorpaySignature
+    });
+
+    res.json({
+      success: true,
+      message: "repayment_successfully_applied",
+      facility: result.facility,
+      allocation: result.allocation,
+      transaction: result.transaction
+    });
+  } catch (err) {
+    console.error("POST /business/repay/razorpay-verify error:", err);
+    res.status(500).json({ error: "failed_to_apply_repayment", message: err.message });
+  }
+});
+
+/**
+ * Retailer submits Bank Transfer Repayment Proof for Business Credit Facility
+ */
+router.post("/business/repay/bank-transfer", auth, requireRole("customer"), async (req, res) => {
+  const { facilityId, amount, utr, paymentSlip, notes } = req.body || {};
+  const numAmount = Number(amount);
+
+  if (!facilityId) return res.status(400).json({ error: "facility_id_required" });
+  if (!numAmount || numAmount <= 0) return res.status(400).json({ error: "invalid_amount" });
+  if (!utr || !String(utr).trim()) return res.status(400).json({ error: "utr_required" });
+
+  try {
+    const facility = await BusinessCreditFacility.findOne({ _id: facilityId, retailerId: req.user.id });
+    if (!facility) return res.status(404).json({ error: "facility_not_found" });
+
+    const cleanUtr = String(utr).trim();
+    // Check duplicate UTR on business credit transactions
+    const existingUtr = await BusinessCreditTransaction.findOne({
+      facilityId: facility._id,
+      $or: [
+        { "paymentDetails.utr": cleanUtr },
+        { idempotencyKey: `BANK-UTR-${cleanUtr}` }
+      ]
+    });
+    if (existingUtr) {
+      return res.status(400).json({ error: "duplicate_utr", message: "This UTR has already been submitted for a transaction." });
+    }
+
+    // Record pending bank transfer repayment transaction with correct schema fields
+    const txn = await BusinessCreditTransaction.create({
+      facilityId: facility._id,
+      retailerId: req.user.id,
+      type: "REPAYMENT",
+      amount: numAmount,
+      principalComponent: 0,
+      interestComponent: 0,
+      feeComponent: 0,
+      principalOutstandingBefore: facility.principalOutstanding,
+      principalOutstandingAfter: facility.principalOutstanding,
+      interestOutstandingBefore: facility.interestOutstanding,
+      interestOutstandingAfter: facility.interestOutstanding,
+      totalPayableBefore: facility.totalPayable,
+      totalPayableAfter: facility.totalPayable,
+      method: "BANK_TRANSFER",
+      paymentDetails: {
+        utr: cleanUtr,
+        paymentSlip: paymentSlip || "",
+        notes: notes || `Direct Bank Transfer (UTR: ${cleanUtr})`,
+        status: "PENDING_VERIFICATION"
+      },
+      idempotencyKey: `BANK-UTR-${cleanUtr}`,
+      reason: `Direct bank transfer repayment proof submitted by retailer (UTR: ${cleanUtr})`,
+      createdBy: String(req.user.id),
+      createdByName: req.user.name || "Retailer"
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "bank_transfer_submitted_for_admin_verification",
+      transaction: txn
+    });
+  } catch (err) {
+    console.error("POST /business/repay/bank-transfer error:", err);
+    res.status(500).json({ error: "failed_to_submit_bank_transfer", message: err.message });
+  }
+});
+
+/**
+ * Initiate AutoPay Mandate Order for Business Credit Facility
+ */
+router.post("/business/mandate/init", auth, requireRole("customer"), async (req, res) => {
+  const { facilityId } = req.body || {};
+  if (!facilityId) return res.status(400).json({ error: "facility_id_required" });
+
+  try {
+    const facility = await BusinessCreditFacility.findOne({ _id: facilityId, retailerId: req.user.id });
+    if (!facility) return res.status(404).json({ error: "facility_not_found" });
+
+    const customer = await Customer.findById(req.user.id);
+
+    const mandateResult = await createAutoPayMandateOrder({
+      facilityId: facility._id,
+      customerPhone: customer?.phone,
+      customerEmail: customer?.email,
+      customerName: customer?.name
+    });
+
+    res.json({
+      success: true,
+      mandate: mandateResult,
+      message: mandateResult.message
+    });
+  } catch (err) {
+    console.error("POST /business/mandate/init error:", err);
+    res.status(500).json({ error: "failed_to_initiate_mandate", message: err.message });
   }
 });
 
@@ -656,6 +997,432 @@ router.post("/admin/notify-outstanding", auth, requirePermission("customers"), a
   } catch (err) {
     console.error("POST /admin/notify-outstanding error:", err);
     res.status(500).json({ error: "failed_to_notify_outstanding", message: err.message });
+  }
+});
+
+// ==========================================
+// ADMIN BUSINESS CREDIT MANAGEMENT ENDPOINTS
+// Requires admin role or permission: customers
+// ==========================================
+
+/**
+ * Get Business Credit Product Settings
+ */
+router.get("/admin/business/settings", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const settings = await getProductSettings();
+    res.json({ settings });
+  } catch (err) {
+    console.error("GET /admin/business/settings error:", err);
+    res.status(500).json({ error: "failed_to_fetch_settings", message: err.message });
+  }
+});
+
+/**
+ * Update Business Credit Product Settings
+ */
+router.put("/admin/business/settings", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const {
+      isProductEnabled,
+      defaultAnnualInterestRatePercent,
+      minAnnualInterestRatePercent,
+      maxAnnualInterestRatePercent,
+      defaultTenureMonths,
+      minTenureMonths,
+      maxTenureMonths,
+      processingFeePercent,
+      minCreditLimit,
+      maxCreditLimit
+    } = req.body || {};
+
+    const settings = await getProductSettings();
+
+    if (isProductEnabled !== undefined) settings.isProductEnabled = Boolean(isProductEnabled);
+    if (defaultAnnualInterestRatePercent !== undefined) settings.defaultAnnualInterestRatePercent = Number(defaultAnnualInterestRatePercent);
+    if (minAnnualInterestRatePercent !== undefined) settings.minAnnualInterestRatePercent = Number(minAnnualInterestRatePercent);
+    if (maxAnnualInterestRatePercent !== undefined) settings.maxAnnualInterestRatePercent = Number(maxAnnualInterestRatePercent);
+    
+    // Strict tenure validation: between 3 and 5 months
+    if (defaultTenureMonths !== undefined) {
+      const t = Number(defaultTenureMonths);
+      if (t < 3 || t > 5) return res.status(400).json({ error: "invalid_tenure", message: "Tenure must be between 3 and 5 months." });
+      settings.defaultTenureMonths = t;
+    }
+    if (minTenureMonths !== undefined) {
+      const t = Number(minTenureMonths);
+      if (t < 3 || t > 5) return res.status(400).json({ error: "invalid_min_tenure", message: "Minimum tenure must be >= 3 months." });
+      settings.minTenureMonths = t;
+    }
+    if (maxTenureMonths !== undefined) {
+      const t = Number(maxTenureMonths);
+      if (t < 3 || t > 5) return res.status(400).json({ error: "invalid_max_tenure", message: "Maximum tenure must be <= 5 months." });
+      settings.maxTenureMonths = t;
+    }
+
+    if (processingFeePercent !== undefined) settings.processingFeePercent = Number(processingFeePercent);
+    if (minCreditLimit !== undefined) settings.minCreditLimit = Number(minCreditLimit);
+    if (maxCreditLimit !== undefined) settings.maxCreditLimit = Number(maxCreditLimit);
+
+    await settings.save();
+
+    res.json({ success: true, message: "settings_updated", settings });
+  } catch (err) {
+    console.error("PUT /admin/business/settings error:", err);
+    res.status(500).json({ error: "failed_to_update_settings", message: err.message });
+  }
+});
+
+/**
+ * List Business Credit Applications
+ */
+router.get("/admin/business/applications", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { status, page = 1, limit = 20, q } = req.query;
+    const filter = {};
+
+    if (status && status !== "ALL") {
+      filter.status = status;
+    }
+
+    if (q) {
+      const regex = new RegExp(q.trim(), "i");
+      const matchedCustomers = await Customer.find({
+        $or: [{ name: regex }, { phone: regex }, { email: regex }, { "kyc.businessName": regex }]
+      }).select("_id");
+      filter.retailerId = { $in: matchedCustomers.map(c => c._id) };
+    }
+
+    const p = Math.max(1, parseInt(page));
+    const l = Math.min(100, Math.max(1, parseInt(limit)));
+
+    const [applications, total] = await Promise.all([
+      BusinessCreditApplication.find(filter)
+        .populate("retailerId", "name email phone kyc creditLimit availableCredit outstandingBalance")
+        .sort({ createdAt: -1 })
+        .skip((p - 1) * l)
+        .limit(l),
+      BusinessCreditApplication.countDocuments(filter)
+    ]);
+
+    res.json({
+      applications,
+      pagination: {
+        page: p,
+        limit: l,
+        total,
+        pages: Math.ceil(total / l)
+      }
+    });
+  } catch (err) {
+    console.error("GET /admin/business/applications error:", err);
+    res.status(500).json({ error: "failed_to_fetch_applications", message: err.message });
+  }
+});
+
+/**
+ * Admin review (Approve, Partial Approve, Reject, Request Info) for Business Credit Application
+ */
+router.post("/admin/business/applications/:id/review", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { action, approvedLimit, approvedTenureMonths, approvedFrequency, annualInterestRatePercent, processingFeePercent, rejectionReason, remarks } = req.body || {};
+
+    const updatedApp = await adminReviewApplication({
+      applicationId: req.params.id,
+      action,
+      reviewedByAdminId: req.user.id,
+      reviewedByAdminName: req.user.name || "Admin",
+      approvedLimit,
+      approvedTenureMonths,
+      approvedFrequency,
+      annualInterestRatePercent,
+      processingFeePercent,
+      rejectionReason,
+      remarks
+    });
+
+    res.json({
+      success: true,
+      message: `application_${action.toLowerCase()}`,
+      application: updatedApp
+    });
+  } catch (err) {
+    console.error("POST /admin/business/applications/:id/review error:", err);
+    res.status(400).json({ error: "review_failed", message: err.message });
+  }
+});
+
+/**
+ * Admin Proactive Credit Grant to eligible retailer
+ */
+router.post("/admin/business/proactive-grant", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { retailerId, approvedLimit, approvedTenureMonths, approvedFrequency, annualInterestRatePercent, processingFeePercent, purpose, remarks } = req.body || {};
+
+    const application = await adminProactiveGrant({
+      retailerId,
+      approvedLimit,
+      approvedTenureMonths,
+      approvedFrequency,
+      annualInterestRatePercent,
+      processingFeePercent,
+      purpose,
+      remarks,
+      reviewedByAdminId: req.user.id,
+      reviewedByAdminName: req.user.name || "Admin"
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "proactive_credit_granted_successfully",
+      application
+    });
+  } catch (err) {
+    console.error("POST /admin/business/proactive-grant error:", err);
+    res.status(400).json({ error: "proactive_grant_failed", message: err.message });
+  }
+});
+
+/**
+ * Admin Confirms Bank Transfer / Disbursement of approved loan
+ */
+router.post("/admin/business/applications/:id/disburse", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { bankTransferReference, disbursementMode, remarks } = req.body || {};
+
+    const result = await confirmDisbursement({
+      applicationId: req.params.id,
+      disbursedByAdminId: req.user.id,
+      disbursedByAdminName: req.user.name || "Admin",
+      bankTransferReference,
+      disbursementMode,
+      remarks
+    });
+
+    res.json({
+      success: true,
+      message: "disbursement_confirmed_and_facility_activated",
+      facility: result.facility,
+      schedulesCount: result.schedules.length
+    });
+  } catch (err) {
+    console.error("POST /admin/business/applications/:id/disburse error:", err);
+    res.status(400).json({ error: "disbursement_failed", message: err.message });
+  }
+});
+
+/**
+ * List all Business Credit Facilities with detailed schedules
+ */
+router.get("/admin/business/facilities", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { status, page = 1, limit = 20, q } = req.query;
+    const filter = {};
+
+    if (status && status !== "ALL") {
+      filter.status = status;
+    }
+
+    if (q) {
+      const regex = new RegExp(q.trim(), "i");
+      const matchedCustomers = await Customer.find({
+        $or: [{ name: regex }, { phone: regex }, { email: regex }, { "kyc.businessName": regex }]
+      }).select("_id");
+      filter.$or = [
+        { facilityNumber: regex },
+        { retailerId: { $in: matchedCustomers.map(c => c._id) } }
+      ];
+    }
+
+    const p = Math.max(1, parseInt(page));
+    const l = Math.min(100, Math.max(1, parseInt(limit)));
+
+    const [facilities, total] = await Promise.all([
+      BusinessCreditFacility.find(filter)
+        .populate("retailerId", "name email phone kyc")
+        .sort({ createdAt: -1 })
+        .skip((p - 1) * l)
+        .limit(l),
+      BusinessCreditFacility.countDocuments(filter)
+    ]);
+
+    const detailedFacilities = await Promise.all(
+      facilities.map(async fac => {
+        const [schedules, recentTransactions] = await Promise.all([
+          BusinessCreditSchedule.find({ facilityId: fac._id }).sort({ instalmentNumber: 1 }),
+          BusinessCreditTransaction.find({ facilityId: fac._id }).sort({ createdAt: -1 }).limit(10)
+        ]);
+        return {
+          ...fac.toObject(),
+          schedules,
+          recentTransactions
+        };
+      })
+    );
+
+    res.json({
+      facilities: detailedFacilities,
+      pagination: {
+        page: p,
+        limit: l,
+        total,
+        pages: Math.ceil(total / l)
+      }
+    });
+  } catch (err) {
+    console.error("GET /admin/business/facilities error:", err);
+    res.status(500).json({ error: "failed_to_fetch_facilities", message: err.message });
+  }
+});
+
+/**
+ * Admin manual repayment recording / offline bank transfer reconciliation for a facility
+ */
+router.post("/admin/business/facilities/:id/repay-reconcile", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { amount, paymentMode, paymentReference, notes, transactionIdToVerify } = req.body || {};
+    const numAmount = Number(amount);
+
+    if (!numAmount || numAmount <= 0) return res.status(400).json({ error: "invalid_amount" });
+
+    // If reconciling an existing PENDING_VERIFICATION transaction
+    if (transactionIdToVerify) {
+      const pendingTxn = await BusinessCreditTransaction.findById(transactionIdToVerify);
+      if (pendingTxn && pendingTxn.status === "PENDING_VERIFICATION") {
+        pendingTxn.status = "SUCCESS";
+        pendingTxn.metadata = { ...pendingTxn.metadata, verifiedByAdminId: req.user.id, verifiedAt: new Date() };
+        await pendingTxn.save();
+      }
+    }
+
+    const result = await processBusinessRepayment({
+      facilityId: req.params.id,
+      amount: numAmount,
+      paymentMode: paymentMode || "BANK_TRANSFER",
+      paymentReference: paymentReference || `ADMIN_REC_${Date.now()}`,
+      notes: notes || `Admin Manual Reconciliation by ${req.user.name || "Admin"}`,
+      receivedByAdminId: req.user.id
+    });
+
+    res.json({
+      success: true,
+      message: "repayment_reconciled_successfully",
+      facility: result.facility,
+      allocation: result.allocation,
+      transaction: result.transaction
+    });
+  } catch (err) {
+    console.error("POST /admin/business/facilities/:id/repay-reconcile error:", err);
+    res.status(400).json({ error: "repayment_reconciliation_failed", message: err.message });
+  }
+});
+
+/**
+ * Admin manual trigger for daily interest accrual
+ */
+router.post("/admin/business/run-accrual", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const result = await accrueDailyInterestForActiveFacilities();
+    res.json({
+      success: true,
+      message: "daily_accrual_completed",
+      result
+    });
+  } catch (err) {
+    console.error("POST /admin/business/run-accrual error:", err);
+    res.status(500).json({ error: "accrual_run_failed", message: err.message });
+  }
+});
+
+/**
+ * Admin extract structured credit bureau reporting dataset (CIBIL / Equifax format)
+ */
+router.get("/admin/business/bureau-report", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { statusFilter } = req.query;
+    const report = await generateBureauReport({ statusFilter });
+    res.json(report);
+  } catch (err) {
+    console.error("GET /admin/business/bureau-report error:", err);
+    res.status(500).json({ error: "failed_to_generate_bureau_report", message: err.message });
+  }
+/**
+ * Admin invariant integrity check for a business facility
+ */
+router.get("/admin/business/facilities/:id/invariants", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const report = await verifyFacilityInvariants(req.params.id);
+    res.json({ success: true, report });
+  } catch (err) {
+    console.error("GET /admin/business/facilities/:id/invariants error:", err);
+    res.status(500).json({ error: "invariant_check_failed", message: err.message });
+  }
+});
+
+/**
+ * Admin audited reconciliation of facility invariants
+ */
+router.post("/admin/business/facilities/:id/reconcile-invariants", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { reason, autoFix } = req.body || {};
+    const report = await reconcileFacilityInvariants({
+      facilityId: req.params.id,
+      autoFix: autoFix !== false,
+      adminId: req.user.id,
+      adminName: req.user.name || "Admin",
+      reason
+    });
+    res.json({ success: true, report });
+  } catch (err) {
+    console.error("POST /admin/business/facilities/:id/reconcile-invariants error:", err);
+    res.status(500).json({ error: "reconciliation_failed", message: err.message });
+  }
+});
+
+/**
+ * Admin reversal of a repayment with full audit trail
+ */
+router.post("/admin/business/facilities/reversal/:transactionId", auth, requirePermission("customers"), async (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ error: "reason_required", message: "Audit reason is required for reversal." });
+    }
+    const result = await reverseBusinessRepayment({
+      transactionId: req.params.transactionId,
+      adminId: req.user.id,
+      adminName: req.user.name || "Admin",
+      reason
+    });
+    res.json({ success: true, message: "repayment_reversed_successfully", result });
+  } catch (err) {
+    console.error("POST /admin/business/facilities/reversal/:transactionId error:", err);
+    res.status(400).json({ error: "reversal_failed", message: err.message });
+  }
+});
+
+// ==========================================
+// AUTOPAY WEBHOOK ENDPOINT
+// Public webhook with cryptographic HMAC verification
+// ==========================================
+router.post("/webhook/autopay", async (req, res) => {
+  try {
+    const signature = req.headers["x-razorpay-signature"];
+    const payload = req.rawBody || JSON.stringify(req.body);
+
+    const isValid = verifyAutoPayWebhookSignature(payload, signature);
+    if (!isValid) {
+      console.warn("[AutoPayWebhook] ⚠️ Invalid webhook signature received");
+      return res.status(400).json({ error: "invalid_webhook_signature" });
+    }
+
+    const event = req.body;
+    const result = await handleAutoPayWebhookEvent(event);
+
+    res.json({ received: true, result });
+  } catch (err) {
+    console.error("POST /webhook/autopay error:", err);
+    res.status(500).json({ error: "webhook_processing_failed", message: err.message });
   }
 });
 

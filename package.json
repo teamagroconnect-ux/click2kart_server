@@ -6,7 +6,10 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node src/tests/credit.test.js && node src/tests/creditIntegration.test.js",
+    "test:unit": "node src/tests/credit.test.js",
+    "test:integration": "node src/tests/creditIntegration.test.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.37.0",
