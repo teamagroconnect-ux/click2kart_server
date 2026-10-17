@@ -1346,6 +1346,8 @@ router.get("/admin/business/bureau-report", auth, requirePermission("customers")
     console.error("GET /admin/business/bureau-report error:", err);
     res.status(500).json({ error: "failed_to_generate_bureau_report", message: err.message });
   }
+});
+
 /**
  * Admin invariant integrity check for a business facility
  */
