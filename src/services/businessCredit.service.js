@@ -199,13 +199,17 @@ export async function adminReviewApplication({
   const application = await BusinessCreditApplication.findById(applicationId);
   if (!application) throw new Error("Application not found.");
 
-  if (!["APPROVED", "PARTIAL_APPROVE", "REQUEST_INFO", "REJECT"].includes(action)) {
-    throw new Error(`Invalid review action: ${action}`);
+  let normalizedAction = String(action || "").toUpperCase().trim();
+  if (normalizedAction === "APPROVE") normalizedAction = "APPROVED";
+  if (normalizedAction === "PARTIAL") normalizedAction = "PARTIAL_APPROVE";
+
+  if (!["APPROVED", "PARTIAL_APPROVE", "REQUEST_INFO", "REJECT"].includes(normalizedAction)) {
+    throw new Error(`Invalid review action: ${action}. Expected APPROVE, PARTIAL_APPROVE, REQUEST_INFO, or REJECT.`);
   }
 
   const settings = await getProductSettings();
 
-  if (action === "REJECT") {
+  if (normalizedAction === "REJECT") {
     if (!rejectionReason || !rejectionReason.trim()) {
       throw new Error("Rejection reason is required.");
     }
@@ -229,7 +233,7 @@ export async function adminReviewApplication({
     return application;
   }
 
-  if (action === "REQUEST_INFO") {
+  if (normalizedAction === "REQUEST_INFO") {
     application.status = "ADDITIONAL_INFO_REQUIRED";
     application.adminNotes = adminNotes || "Additional documentation required.";
     application.reviewedBy = adminId;
@@ -422,7 +426,7 @@ export async function adminProactiveGrant({
 /**
  * Retailer reviews and accepts the approved credit offer
  */
-export async function acceptOffer({ applicationId, retailerId, ipAddress }) {
+export async function acceptOffer({ applicationId, retailerId, ipAddress, bankDetails }) {
   const application = await BusinessCreditApplication.findOne({
     _id: applicationId,
     retailerId
@@ -435,6 +439,31 @@ export async function acceptOffer({ applicationId, retailerId, ipAddress }) {
 
   if (application.approvedOffer?.offerExpiresAt && new Date() > application.approvedOffer.offerExpiresAt) {
     throw new Error("This credit offer has expired. Please contact administration.");
+  }
+
+  // Update retailer's disbursement bank details if provided
+  if (bankDetails && typeof bankDetails === "object") {
+    if (!application.businessDetails) application.businessDetails = {};
+    if (!application.businessDetails.bankDetails) application.businessDetails.bankDetails = {};
+
+    if (bankDetails.accountHolder) {
+      application.businessDetails.bankDetails.accountHolder = String(bankDetails.accountHolder).trim();
+    }
+    if (bankDetails.accountNumber) {
+      application.businessDetails.bankDetails.accountNumber = String(bankDetails.accountNumber).trim();
+    }
+    if (bankDetails.ifsc) {
+      application.businessDetails.bankDetails.ifsc = String(bankDetails.ifsc).trim().toUpperCase();
+    }
+    if (bankDetails.bankName) {
+      application.businessDetails.bankDetails.bankName = String(bankDetails.bankName).trim();
+    }
+    if (bankDetails.branch) {
+      application.businessDetails.bankDetails.branch = String(bankDetails.branch).trim();
+    }
+    if (bankDetails.accountType) {
+      application.businessDetails.bankDetails.accountType = String(bankDetails.accountType).trim();
+    }
   }
 
   application.status = "OFFER_ACCEPTED";

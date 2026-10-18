@@ -395,23 +395,64 @@ router.post("/business/accept-offer/:id", auth, requireRole("customer"), async (
   try {
     const ipAddress = req.ip || req.headers["x-forwarded-for"] || "127.0.0.1";
     const userAgent = req.headers["user-agent"] || "Web Browser";
+    const { bankDetails } = req.body || {};
 
-    const result = await acceptOffer({
+    const application = await acceptOffer({
       applicationId: req.params.id,
       retailerId: req.user.id,
       ipAddress,
-      userAgent
+      userAgent,
+      bankDetails
     });
 
     res.json({
       success: true,
       message: "business_credit_offer_accepted",
-      application: result.application,
-      facility: result.facility
+      application
     });
   } catch (err) {
     console.error("POST /business/accept-offer error:", err);
     res.status(400).json({ error: "offer_acceptance_failed", message: err.message });
+  }
+});
+
+/**
+ * Retailer updates or provides disbursement bank details for their credit application
+ */
+router.post("/business/applications/:id/bank-details", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const { accountHolder, accountNumber, ifsc, bankName, branch, accountType } = req.body || {};
+    if (!accountNumber || !ifsc) {
+      return res.status(400).json({ error: "account_and_ifsc_required", message: "Account number and IFSC code are required." });
+    }
+
+    const application = await BusinessCreditApplication.findOne({
+      _id: req.params.id,
+      retailerId: req.user.id
+    });
+    if (!application) {
+      return res.status(404).json({ error: "application_not_found", message: "Credit application not found." });
+    }
+
+    if (!application.businessDetails) application.businessDetails = {};
+    application.businessDetails.bankDetails = {
+      accountHolder: String(accountHolder || req.user.name || "").trim(),
+      accountNumber: String(accountNumber).trim(),
+      ifsc: String(ifsc).trim().toUpperCase(),
+      bankName: String(bankName || "").trim(),
+      branch: String(branch || "").trim(),
+      accountType: String(accountType || "CURRENT").trim()
+    };
+    await application.save();
+
+    res.json({
+      success: true,
+      message: "bank_details_saved_successfully",
+      bankDetails: application.businessDetails.bankDetails
+    });
+  } catch (err) {
+    console.error("POST /business/applications/:id/bank-details error:", err);
+    res.status(400).json({ error: "failed_to_update_bank_details", message: err.message });
   }
 });
 
@@ -609,11 +650,75 @@ router.post("/business/mandate/init", auth, requireRole("customer"), async (req,
     res.json({
       success: true,
       mandate: mandateResult,
+      mandateOrder: mandateResult.mandateOrder || null,
+      key: mandateResult.key || process.env.RAZORPAY_KEY_ID,
+      customerId: mandateResult.customerId || null,
       message: mandateResult.message
     });
   } catch (err) {
     console.error("POST /business/mandate/init error:", err);
     res.status(500).json({ error: "failed_to_initiate_mandate", message: err.message });
+  }
+});
+
+/**
+ * Verify and Activate AutoPay Mandate after Retailer authorizes with bank / UPI
+ */
+router.post("/business/mandate/verify", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const { facilityId, razorpayPaymentId, razorpayOrderId, razorpaySignature } = req.body || {};
+    if (!facilityId || !razorpayPaymentId) {
+      return res.status(400).json({ error: "missing_parameters", message: "Facility ID and Payment/Mandate ID are required." });
+    }
+
+    const facility = await BusinessCreditFacility.findOne({ _id: facilityId, retailerId: req.user.id });
+    if (!facility) return res.status(404).json({ error: "facility_not_found", message: "Credit facility not found." });
+
+    // Verify HMAC-SHA256 signature if order ID and signature provided
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (razorpayOrderId && razorpaySignature && secret && !secret.includes("placeholder")) {
+      const generated = crypto.createHmac("sha256", secret).update(`${razorpayOrderId}|${razorpayPaymentId}`).digest("hex");
+      if (generated !== razorpaySignature) {
+        return res.status(400).json({ error: "invalid_signature", message: "Mandate signature verification failed." });
+      }
+    }
+
+    // Activate AutoPay Mandate on facility
+    facility.autoPayMandate = {
+      mandateId: razorpayPaymentId,
+      provider: "RAZORPAY",
+      status: "ACTIVE",
+      registeredAt: new Date(),
+      lastDebitStatus: "AUTHORIZED",
+      failureReason: ""
+    };
+    await facility.save();
+
+    // Log transaction
+    await BusinessCreditTransaction.create({
+      facilityId: facility._id,
+      retailerId: req.user.id,
+      type: "AUTOPAY",
+      amount: 0,
+      status: "SUCCESS",
+      paymentMode: "AUTOPAY",
+      paymentDetails: {
+        mandateId: razorpayPaymentId,
+        razorpayOrderId: razorpayOrderId || "",
+        notes: "Customer authorized AutoPay recurring mandate via Razorpay"
+      },
+      createdBy: req.user.id,
+      createdByName: req.user.name || "Retailer"
+    });
+
+    res.json({
+      success: true,
+      message: "AutoPay mandate registered and activated successfully!",
+      facility
+    });
+  } catch (err) {
+    console.error("POST /business/mandate/verify error:", err);
+    res.status(500).json({ error: "mandate_verification_failed", message: err.message });
   }
 });
 
@@ -1072,9 +1177,9 @@ router.put("/admin/business/settings", auth, requirePermission("customers"), asy
     if (processingFeePercent !== undefined) settings.processingFeeValue = Number(processingFeePercent);
     if (processingFeeValue !== undefined) settings.processingFeeValue = Number(processingFeeValue);
     if (minCreditLimit !== undefined) settings.minAmount = Number(minCreditLimit);
-    if (minAmount !== undefined) settings.minAmount = Number(minAmount);
     if (maxCreditLimit !== undefined) settings.maxAmount = Number(maxCreditLimit);
     if (maxAmount !== undefined) settings.maxAmount = Number(maxAmount);
+    if (req.body?.autoPayEnabled !== undefined) settings.autoPayEnabled = Boolean(req.body.autoPayEnabled);
 
     await settings.save();
 

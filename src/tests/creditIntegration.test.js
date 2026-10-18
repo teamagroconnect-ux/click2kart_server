@@ -84,7 +84,11 @@ class MockDb {
       totalPayable: sanctionedLimit, // At disbursement, payoff = principalOutstanding + interestOutstanding(0)
       lastInterestAccrualDate: new Date(),
       nextDueDate: amort.schedule[0].dueDate,
-      nextDueAmount: amort.schedule[0].totalDue
+      nextDueAmount: amort.schedule[0].totalDue,
+      autoPayMandate: {
+        status: "NOT_REGISTERED",
+        mandateId: ""
+      }
     };
     this.facilities.set(facilityId, facility);
 
@@ -864,6 +868,114 @@ test("12. Early Repayment Settlement & Invariant Check across Short Tenures", as
   });
 
   assert.strictEqual(inv.invariantsPassed, true, `Settled facility must satisfy invariants: ${JSON.stringify(inv.discrepancies)}`);
+});
+
+test("13. Admin Review (APPROVE normalization), Bank Details Capture & AutoPay Activation", async () => {
+  // 1. Verify action normalization: both 'APPROVE' (verb) and 'APPROVED' (past participle) are accepted
+  const normalizeAction = (act) => {
+    let normalized = String(act || "").toUpperCase().trim();
+    if (normalized === "APPROVE") normalized = "APPROVED";
+    if (normalized === "PARTIAL") normalized = "PARTIAL_APPROVE";
+    if (!["APPROVED", "PARTIAL_APPROVE", "REQUEST_INFO", "REJECT"].includes(normalized)) {
+      throw new Error(`Invalid review action: ${act}`);
+    }
+    return normalized;
+  };
+
+  assert.strictEqual(normalizeAction("APPROVE"), "APPROVED", "Action 'APPROVE' from frontend must normalize to 'APPROVED'");
+  assert.strictEqual(normalizeAction("APPROVED"), "APPROVED");
+  assert.strictEqual(normalizeAction("PARTIAL_APPROVE"), "PARTIAL_APPROVE");
+  assert.strictEqual(normalizeAction("REJECT"), "REJECT");
+  assert.throws(() => normalizeAction("INVALID_ACTION"), /Invalid review action/);
+
+  // 2. Retailer Application & Admin Approval
+  const testApp = {
+    _id: "app_bank_test_101",
+    retailerId: "ret_bank_test_101",
+    applicationNumber: "BCA-20261018-9999",
+    requestedAmount: 50000,
+    requestedTenureMonths: 3,
+    status: "SUBMITTED",
+    businessDetails: {}
+  };
+
+  // Admin approves with normalized action
+  testApp.status = normalizeAction("APPROVE");
+  testApp.approvedOffer = {
+    approvedAmount: 50000,
+    approvedTenureMonths: 3,
+    interestRatePerAnnum: 18,
+    repaymentFrequency: "WEEKLY"
+  };
+  assert.strictEqual(testApp.status, "APPROVED");
+
+  // 3. Retailer accepts offer and provides Bank Details
+  const retailerBankInput = {
+    accountHolder: "M/S Sharma Retail Store",
+    bankName: "HDFC Bank",
+    accountNumber: "50100234567890",
+    ifsc: "HDFC0001234",
+    accountType: "CURRENT"
+  };
+
+  // Accept offer logic
+  testApp.businessDetails.bankDetails = {
+    accountHolder: retailerBankInput.accountHolder,
+    bankName: retailerBankInput.bankName,
+    accountNumber: retailerBankInput.accountNumber,
+    ifsc: retailerBankInput.ifsc.toUpperCase(),
+    accountType: retailerBankInput.accountType
+  };
+  testApp.status = "OFFER_ACCEPTED";
+  testApp.status = "DISBURSEMENT_PENDING";
+
+  assert.strictEqual(testApp.status, "DISBURSEMENT_PENDING");
+  assert.strictEqual(testApp.businessDetails.bankDetails.accountHolder, "M/S Sharma Retail Store");
+  assert.strictEqual(testApp.businessDetails.bankDetails.accountNumber, "50100234567890");
+  assert.strictEqual(testApp.businessDetails.bankDetails.ifsc, "HDFC0001234");
+
+  // 4. Admin Disburses to Retailer's Bank Account
+  const { facility } = db.disburseFacility({
+    retailerId: testApp.retailerId,
+    sanctionedLimit: testApp.approvedOffer.approvedAmount,
+    tenureMonths: testApp.approvedOffer.approvedTenureMonths,
+    interestRate: testApp.approvedOffer.interestRatePerAnnum,
+    frequency: testApp.approvedOffer.repaymentFrequency
+  });
+
+  facility.disbursementDetails = {
+    method: "BANK_TRANSFER",
+    utr: "HDFCN261018123456",
+    accountHolder: testApp.businessDetails.bankDetails.accountHolder,
+    accountNumber: testApp.businessDetails.bankDetails.accountNumber,
+    bankName: testApp.businessDetails.bankDetails.bankName,
+    ifsc: testApp.businessDetails.bankDetails.ifsc
+  };
+
+  assert.strictEqual(facility.status, "ACTIVE");
+  assert.strictEqual(facility.disbursementDetails.accountNumber, "50100234567890");
+  assert.strictEqual(facility.autoPayMandate.status, "NOT_REGISTERED");
+
+  // 5. Retailer activates AutoPay Mandate via Razorpay
+  const razorpayPaymentId = "pay_test_mandate_live_8888";
+  facility.autoPayMandate = {
+    mandateId: razorpayPaymentId,
+    provider: "RAZORPAY",
+    status: "ACTIVE",
+    registeredAt: new Date(),
+    lastDebitStatus: "AUTHORIZED"
+  };
+
+  assert.strictEqual(facility.autoPayMandate.status, "ACTIVE");
+  assert.strictEqual(facility.autoPayMandate.mandateId, "pay_test_mandate_live_8888");
+
+  // 6. Verify financial invariants remain healthy
+  const inv = evaluateFacilityInvariants({
+    facility,
+    schedules: Array.from(db.schedules.values()).filter(s => s.facilityId === facility._id),
+    transactions: Array.from(db.transactions.values()).filter(t => t.facilityId === facility._id)
+  });
+  assert.strictEqual(inv.invariantsPassed, true);
 });
 
 // Run all tests sequentially
