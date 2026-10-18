@@ -56,7 +56,7 @@ const router = express.Router();
 router.get("/me", auth, requireRole("customer"), async (req, res) => {
   try {
     const customer = await Customer.findById(req.user.id).select(
-      "name phone email isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings isKycComplete"
+      "name phone email isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings isKycComplete autoPayMandate bankDetails"
     );
 
     if (!customer) return res.status(404).json({ error: "customer_not_found" });
@@ -81,6 +81,8 @@ router.get("/me", auth, requireRole("customer"), async (req, res) => {
       usedCredit: used,
       outstandingBalance: outstanding,
       utilization,
+      autoPayMandate: customer.autoPayMandate || { status: "NOT_REGISTERED" },
+      bankDetails: customer.bankDetails || {},
       deliverySettings: customer.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
     });
   } catch (err) {
@@ -303,6 +305,161 @@ router.post("/me/repay/bank-transfer", auth, requireRole("customer"), async (req
   }
 });
 
+/**
+ * Configure default disbursement/settlement bank account for retailer
+ */
+router.post("/me/bank-details", auth, requireRole("customer"), async (req, res) => {
+  try {
+    const { accountHolder, accountNumber, ifsc, bankName, branch, accountType } = req.body || {};
+    if (!accountNumber || !ifsc) {
+      return res.status(400).json({ error: "account_and_ifsc_required", message: "Account number and IFSC code are required." });
+    }
+
+    const customer = await Customer.findById(req.user.id);
+    if (!customer) return res.status(404).json({ error: "customer_not_found" });
+
+    customer.bankDetails = {
+      accountHolder: String(accountHolder || customer.name || "").trim(),
+      accountNumber: String(accountNumber).trim(),
+      ifsc: String(ifsc).trim().toUpperCase(),
+      bankName: String(bankName || "").trim(),
+      branch: String(branch || "").trim(),
+      accountType: String(accountType || "CURRENT").trim()
+    };
+    await customer.save();
+
+    // Sync to any active business credit applications
+    const activeApp = await BusinessCreditApplication.findOne({
+      retailerId: customer._id,
+      status: { $in: ["SUBMITTED", "UNDER_REVIEW", "ADDITIONAL_INFO_REQUIRED", "APPROVED", "OFFER_ACCEPTED", "DISBURSEMENT_PENDING"] }
+    }).sort({ createdAt: -1 });
+
+    if (activeApp) {
+      if (!activeApp.businessDetails) activeApp.businessDetails = {};
+      activeApp.businessDetails.bankDetails = customer.bankDetails;
+      activeApp.timeline = activeApp.timeline || [];
+      activeApp.timeline.push({
+        status: activeApp.status,
+        title: "Disbursement Bank Account Configured",
+        description: `Disbursement bank account updated: ${customer.bankDetails.bankName || "Bank"} (A/C: ••••${customer.bankDetails.accountNumber.slice(-4)})`,
+        timestamp: new Date(),
+        performedBy: customer.name || "Retailer"
+      });
+      await activeApp.save();
+    }
+
+    res.json({
+      success: true,
+      message: "bank_details_saved_successfully",
+      bankDetails: customer.bankDetails
+    });
+  } catch (err) {
+    console.error("POST /me/bank-details error:", err);
+    res.status(500).json({ error: "failed_to_save_bank_details", message: err.message });
+  }
+});
+
+/**
+ * Initiate AutoPay Mandate Order for Trade Credit Line
+ */
+const handleTradeMandateInit = async (req, res) => {
+  try {
+    const customer = await Customer.findById(req.user.id);
+    if (!customer) return res.status(404).json({ error: "customer_not_found" });
+
+    if (!customer.isCreditEnabled) {
+      return res.status(403).json({
+        error: "credit_not_enabled",
+        message: "Trade Credit Line is not enabled for your account"
+      });
+    }
+
+    const mandateResult = await createAutoPayMandateOrder({
+      retailerId: customer._id,
+      customerPhone: customer.phone,
+      customerEmail: customer.email,
+      customerName: customer.name,
+      maxAmount: customer.creditLimit || 50000,
+      type: "TRADE_CREDIT"
+    });
+
+    res.json({
+      success: true,
+      mandate: mandateResult,
+      mandateOrder: mandateResult.mandateOrder || null,
+      key: mandateResult.key || process.env.RAZORPAY_KEY_ID,
+      customerId: mandateResult.customerId || null,
+      message: mandateResult.message
+    });
+  } catch (err) {
+    console.error("POST /trade/mandate/init error:", err);
+    res.status(500).json({ error: "failed_to_initiate_mandate", message: err.message });
+  }
+};
+
+router.post("/trade/mandate/init", auth, requireRole("customer"), handleTradeMandateInit);
+router.post("/me/mandate/init", auth, requireRole("customer"), handleTradeMandateInit);
+
+/**
+ * Verify and Activate AutoPay Mandate for Trade Credit Line
+ */
+const handleTradeMandateVerify = async (req, res) => {
+  try {
+    const { razorpayPaymentId, razorpayOrderId, razorpaySignature } = req.body || {};
+    if (!razorpayPaymentId) {
+      return res.status(400).json({ error: "missing_parameters", message: "Mandate Payment ID is required." });
+    }
+
+    const customer = await Customer.findById(req.user.id);
+    if (!customer) return res.status(404).json({ error: "customer_not_found" });
+
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (razorpayOrderId && razorpaySignature && secret && !secret.includes("placeholder")) {
+      const generated = crypto.createHmac("sha256", secret).update(`${razorpayOrderId}|${razorpayPaymentId}`).digest("hex");
+      if (generated !== razorpaySignature) {
+        return res.status(400).json({ error: "invalid_signature", message: "Mandate signature verification failed." });
+      }
+    }
+
+    customer.autoPayMandate = {
+      mandateId: razorpayPaymentId,
+      provider: "RAZORPAY",
+      status: "ACTIVE",
+      registeredAt: new Date(),
+      lastDebitStatus: "AUTHORIZED",
+      failureReason: "",
+      maxAmount: customer.creditLimit || 50000
+    };
+    await customer.save();
+
+    await CreditLedger.create({
+      retailerId: customer._id,
+      amount: 0,
+      type: "CREDIT_ADJUSTMENT",
+      referenceId: razorpayPaymentId,
+      referenceType: "OTHER",
+      balanceBefore: customer.availableCredit,
+      balanceAfter: customer.availableCredit,
+      outstandingBefore: customer.outstandingBalance,
+      outstandingAfter: customer.outstandingBalance,
+      reason: `Trade Credit AutoPay Mandate authorized (${razorpayPaymentId})`,
+      createdBy: customer.name || "Retailer"
+    });
+
+    res.json({
+      success: true,
+      message: "Trade Credit AutoPay mandate activated successfully!",
+      mandate: customer.autoPayMandate
+    });
+  } catch (err) {
+    console.error("POST /trade/mandate/verify error:", err);
+    res.status(500).json({ error: "mandate_verification_failed", message: err.message });
+  }
+};
+
+router.post("/trade/mandate/verify", auth, requireRole("customer"), handleTradeMandateVerify);
+router.post("/me/mandate/verify", auth, requireRole("customer"), handleTradeMandateVerify);
+
 // ==========================================
 // RETAILER BUSINESS CREDIT LINE ENDPOINTS
 // ==========================================
@@ -317,6 +474,19 @@ router.get("/business/eligibility", auth, requireRole("customer"), async (req, r
   } catch (err) {
     console.error("GET /business/eligibility error:", err);
     res.status(500).json({ error: "failed_to_check_eligibility", message: err.message });
+  }
+});
+
+/**
+ * Get Business Credit Product Settings for retailer/client
+ */
+router.get("/business/settings", auth, async (req, res) => {
+  try {
+    const settings = await getProductSettings();
+    res.json({ settings });
+  } catch (err) {
+    console.error("GET /business/settings error:", err);
+    res.status(500).json({ error: "failed_to_fetch_settings", message: err.message });
   }
 });
 
@@ -443,7 +613,23 @@ router.post("/business/applications/:id/bank-details", auth, requireRole("custom
       branch: String(branch || "").trim(),
       accountType: String(accountType || "CURRENT").trim()
     };
+    application.timeline = application.timeline || [];
+    application.timeline.push({
+      status: application.status,
+      title: "Disbursement Bank Account Configured",
+      description: `Disbursement bank account set to ${application.businessDetails.bankDetails.bankName || "Bank"} (A/C: ••••${application.businessDetails.bankDetails.accountNumber.slice(-4)}, IFSC: ${application.businessDetails.bankDetails.ifsc}).`,
+      timestamp: new Date(),
+      performedBy: req.user?.name || "Retailer"
+    });
     await application.save();
+
+    try {
+      await Customer.findByIdAndUpdate(req.user.id, {
+        bankDetails: application.businessDetails.bankDetails
+      });
+    } catch {
+      // Non-fatal
+    }
 
     res.json({
       success: true,

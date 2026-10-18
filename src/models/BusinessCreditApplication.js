@@ -41,7 +41,8 @@ const businessCreditApplicationSchema = new mongoose.Schema(
         accountNumber: { type: String, default: "" },
         ifsc: { type: String, default: "" },
         bankName: { type: String, default: "" },
-        branch: { type: String, default: "" }
+        branch: { type: String, default: "" },
+        accountType: { type: String, default: "CURRENT" }
       }
     },
     supportingDocuments: [
@@ -117,7 +118,16 @@ const businessCreditApplicationSchema = new mongoose.Schema(
     facilityId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "BusinessCreditFacility"
-    }
+    },
+    timeline: [
+      {
+        status: { type: String, required: true },
+        title: { type: String, required: true },
+        description: { type: String, default: "" },
+        timestamp: { type: Date, default: Date.now },
+        performedBy: { type: String, default: "SYSTEM" }
+      }
+    ]
   },
   { timestamps: true }
 );

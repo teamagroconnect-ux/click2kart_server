@@ -62,6 +62,28 @@ const customerSchema = new mongoose.Schema(
     availableCredit: { type: Number, default: 0 },
     usedCredit: { type: Number, default: 0 },
     outstandingBalance: { type: Number, default: 0 },
+    autoPayMandate: {
+      mandateId: { type: String, default: "" },
+      provider: { type: String, default: "RAZORPAY" },
+      status: {
+        type: String,
+        enum: ["NOT_REGISTERED", "PENDING", "ACTIVE", "FAILED", "REVOKED"],
+        default: "NOT_REGISTERED"
+      },
+      registeredAt: { type: Date },
+      lastDebitAttemptAt: { type: Date },
+      lastDebitStatus: { type: String, default: "" },
+      failureReason: { type: String, default: "" },
+      maxAmount: { type: Number, default: 0 }
+    },
+    bankDetails: {
+      accountHolder: { type: String, default: "" },
+      accountNumber: { type: String, default: "" },
+      ifsc: { type: String, default: "" },
+      bankName: { type: String, default: "" },
+      branch: { type: String, default: "" },
+      accountType: { type: String, default: "CURRENT" }
+    },
     deliverySettings: {
       delhiveryEnabled: { type: Boolean, default: true },
       localDeliveryEnabled: { type: Boolean, default: false }

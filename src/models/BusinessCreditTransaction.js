@@ -23,7 +23,9 @@ const businessCreditTransactionSchema = new mongoose.Schema(
         "REPAYMENT",
         "ADJUSTMENT",
         "REVERSAL",
-        "PENALTY"
+        "PENALTY",
+        "AUTOPAY",
+        "MANDATE_REGISTRATION"
       ],
       required: true,
       index: true
@@ -71,7 +73,19 @@ const businessCreditTransactionSchema = new mongoose.Schema(
     },
     method: {
       type: String,
-      enum: ["SYSTEM", "RAZORPAY", "BANK_TRANSFER", "AUTOPAY", "MANUAL_ADJUSTMENT"],
+      enum: [
+        "SYSTEM",
+        "RAZORPAY",
+        "BANK_TRANSFER",
+        "NEFT",
+        "RTGS",
+        "IMPS",
+        "CHEQUE",
+        "CASH",
+        "UPI",
+        "AUTOPAY",
+        "MANUAL_ADJUSTMENT"
+      ],
       default: "SYSTEM"
     },
     paymentDetails: {

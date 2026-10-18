@@ -10,7 +10,15 @@ import { processBusinessRepayment, getProductSettings } from "./businessCredit.s
  * creates a real recurring authorization order on Razorpay.
  * Otherwise, cleanly falls back to manual collections.
  */
-export async function createAutoPayMandate({ facilityId, customerPhone, customerEmail, customerName, maxAmount }) {
+export async function createAutoPayMandate({
+  facilityId,
+  retailerId,
+  customerPhone,
+  customerEmail,
+  customerName,
+  maxAmount,
+  type = "BUSINESS_CREDIT"
+}) {
   let facilityNumber = null;
   let facility = null;
   if (facilityId) {
@@ -31,7 +39,7 @@ export async function createAutoPayMandate({ facilityId, customerPhone, customer
   }
 
   const isLiveKey = process.env.RAZORPAY_KEY_ID && !process.env.RAZORPAY_KEY_ID.includes("placeholder");
-  const canCreateMandate = (autoPayConfigured || process.env.AUTOPAY_LIVE === "true") && isLiveKey && facilityId;
+  const canCreateMandate = (autoPayConfigured || process.env.AUTOPAY_LIVE === "true") && isLiveKey && (facilityId || retailerId);
 
   if (canCreateMandate) {
     try {
@@ -51,16 +59,19 @@ export async function createAutoPayMandate({ facilityId, customerPhone, customer
       }
 
       // Create mandate authorization order (₹0 auth or ₹5 refundable auth)
-      const receipt = `mnd_${String(facilityId).slice(-6)}_${Date.now()}`.slice(-40);
+      const targetId = facilityId || retailerId || "mnd";
+      const receipt = `mnd_${String(targetId).slice(-6)}_${Date.now()}`.slice(-40);
+      const isTrade = type === "TRADE_CREDIT" || (!facilityId && Boolean(retailerId));
       const orderPayload = {
         amount: 0,
         currency: "INR",
         receipt,
         payment_capture: 1,
         notes: {
-          facilityId: String(facilityId),
+          facilityId: facilityId ? String(facilityId) : "",
+          retailerId: retailerId ? String(retailerId) : "",
           facilityNumber: facilityNumber || "",
-          type: "AUTOPAY_MANDATE"
+          type: isTrade ? "TRADE_CREDIT_MANDATE" : "AUTOPAY_MANDATE"
         }
       };
       if (customerId) orderPayload.customer_id = customerId;
@@ -86,6 +97,7 @@ export async function createAutoPayMandate({ facilityId, customerPhone, customer
         key: process.env.RAZORPAY_KEY_ID,
         customerId,
         facilityNumber,
+        type: isTrade ? "TRADE_CREDIT" : "BUSINESS_CREDIT",
         status: "INITIATED",
         message: "AutoPay mandate registration initialized. Please authorize with your bank/UPI."
       };
@@ -95,11 +107,13 @@ export async function createAutoPayMandate({ facilityId, customerPhone, customer
   }
 
   // Safe fallback if not configured or pending
+  const isTrade = type === "TRADE_CREDIT" || (!facilityId && Boolean(retailerId));
   return {
     enabled: false,
     recurringEnabled: false,
     mandateId: null,
     status: "PENDING_MERCHANT_ACTIVATION",
+    type: isTrade ? "TRADE_CREDIT" : "BUSINESS_CREDIT",
     message: "AutoPay e-Mandate registration is currently pending aggregator onboarding. Automatic recurring collections are disabled. Please use instant online payment (Razorpay) or direct bank transfer (NEFT/RTGS/IMPS).",
     facilityNumber,
     fallbackToManual: true

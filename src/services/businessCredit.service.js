@@ -173,7 +173,16 @@ export async function submitApplication({
     requestedTenureMonths: tenure,
     businessDetails: businessDetails || {},
     supportingDocuments: supportingDocuments || [],
-    status: "SUBMITTED"
+    status: "SUBMITTED",
+    timeline: [
+      {
+        status: "SUBMITTED",
+        title: "Application Submitted",
+        description: `Retailer applied for ₹${amount.toLocaleString("en-IN")} working capital for ${tenure} months.`,
+        timestamp: new Date(),
+        performedBy: "Retailer"
+      }
+    ]
   });
 
   return application;
@@ -219,6 +228,14 @@ export async function adminReviewApplication({
     application.reviewedBy = adminId;
     application.reviewedByName = adminName || "Admin";
     application.reviewedAt = new Date();
+    application.timeline = application.timeline || [];
+    application.timeline.push({
+      status: "REJECTED",
+      title: "Application Rejected",
+      description: rejectionReason.trim(),
+      timestamp: new Date(),
+      performedBy: adminName || "Admin"
+    });
     await application.save();
 
     await AuditLog.create({
@@ -239,6 +256,14 @@ export async function adminReviewApplication({
     application.reviewedBy = adminId;
     application.reviewedByName = adminName || "Admin";
     application.reviewedAt = new Date();
+    application.timeline = application.timeline || [];
+    application.timeline.push({
+      status: "ADDITIONAL_INFO_REQUIRED",
+      title: "Additional Info Requested",
+      description: adminNotes || "Additional documentation required.",
+      timestamp: new Date(),
+      performedBy: adminName || "Admin"
+    });
     await application.save();
 
     return application;
@@ -305,6 +330,15 @@ export async function adminReviewApplication({
     agreementText: `Business Credit Facility Agreement for ₹${finalAmount.toLocaleString("en-IN")} at ${rate}% p.a. for ${finalTenure} months. Repayment Frequency: ${freq}. Total Instalments: ${amort.numInstalments}.`,
     agreementAccepted: false
   };
+
+  application.timeline = application.timeline || [];
+  application.timeline.push({
+    status: "APPROVED",
+    title: normalizedAction === "PARTIAL_APPROVE" ? "Partial Sanction Offer Granted" : "Credit Limit Sanctioned",
+    description: `Sanctioned ₹${finalAmount.toLocaleString("en-IN")} for ${finalTenure} months at ${rate}% p.a. (${freq} repayments).`,
+    timestamp: new Date(),
+    performedBy: adminName || "Admin"
+  });
 
   await application.save();
 
@@ -408,7 +442,16 @@ export async function adminProactiveGrant({
       offerExpiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days
       agreementText: `Proactive Business Credit Agreement for ₹${finalAmount.toLocaleString("en-IN")} at ${rate}% p.a. for ${finalTenure} months. Repayment: ${freq}.`,
       agreementAccepted: false
-    }
+    },
+    timeline: [
+      {
+        status: "APPROVED",
+        title: "Proactive Credit Sanction Granted",
+        description: `Admin granted ₹${finalAmount.toLocaleString("en-IN")} working capital for ${finalTenure} months at ${rate}% p.a.`,
+        timestamp: new Date(),
+        performedBy: adminName || "Admin"
+      }
+    ]
   });
 
   await AuditLog.create({
@@ -470,11 +513,41 @@ export async function acceptOffer({ applicationId, retailerId, ipAddress, bankDe
   application.approvedOffer.agreementAccepted = true;
   application.approvedOffer.offerAcceptedAt = new Date();
   application.approvedOffer.offerAcceptedIp = String(ipAddress || "");
-  await application.save();
+
+  const bankSummary = application.businessDetails?.bankDetails?.accountNumber
+    ? `Bank: ${application.businessDetails.bankDetails.bankName || "Bank"} (A/C: ••••${application.businessDetails.bankDetails.accountNumber.slice(-4)})`
+    : "Disbursement bank details recorded.";
+
+  application.timeline = application.timeline || [];
+  application.timeline.push({
+    status: "OFFER_ACCEPTED",
+    title: "Sanction Offer Accepted by Retailer",
+    description: `Retailer electronically signed agreement and confirmed disbursement account (${bankSummary}).`,
+    timestamp: new Date(),
+    performedBy: "Retailer"
+  });
 
   // Moves to disbursement pending
   application.status = "DISBURSEMENT_PENDING";
+  application.timeline.push({
+    status: "DISBURSEMENT_PENDING",
+    title: "Disbursement Payout Pending",
+    description: "Application queued for administration bank payout (NEFT/RTGS).",
+    timestamp: new Date(),
+    performedBy: "System"
+  });
+
   await application.save();
+
+  if (application.businessDetails?.bankDetails?.accountNumber) {
+    try {
+      await Customer.findByIdAndUpdate(application.retailerId, {
+        bankDetails: application.businessDetails.bankDetails
+      });
+    } catch {
+      // Non-fatal if customer model is mocked in test
+    }
+  }
 
   return application;
 }
@@ -523,6 +596,22 @@ export async function confirmDisbursement({
     permittedTenures: settings.permittedTenures && settings.permittedTenures.length > 0 ? settings.permittedTenures : [1, 2, 3, 4, 5]
   });
 
+  const validMethods = [
+    "SYSTEM",
+    "RAZORPAY",
+    "BANK_TRANSFER",
+    "NEFT",
+    "RTGS",
+    "IMPS",
+    "CHEQUE",
+    "CASH",
+    "UPI",
+    "AUTOPAY",
+    "MANUAL_ADJUSTMENT"
+  ];
+  let finalMethod = String(method || "BANK_TRANSFER").toUpperCase().trim();
+  if (!validMethods.includes(finalMethod)) finalMethod = "BANK_TRANSFER";
+
   // Create BusinessCreditFacility
   const facility = await BusinessCreditFacility.create({
     facilityNumber,
@@ -549,7 +638,7 @@ export async function confirmDisbursement({
     totalPayable: offer.approvedAmount,
     lastInterestAccrualDate: disbDate,
     disbursementDetails: {
-      method: method || "BANK_TRANSFER",
+      method: finalMethod,
       utr: utr || "",
       accountHolder: accountHolder || application.businessDetails?.bankDetails?.accountHolder || "",
       accountNumber: accountNumber || application.businessDetails?.bankDetails?.accountNumber || "",
@@ -593,7 +682,7 @@ export async function confirmDisbursement({
     interestOutstandingAfter: 0,
     totalPayableBefore: 0,
     totalPayableAfter: offer.approvedAmount,
-    method: method || "BANK_TRANSFER",
+    method: finalMethod,
     paymentDetails: {
       utr: utr || "",
       notes: `Disbursement confirmed by ${adminName || 'Admin'}. Net amount: ₹${offer.netDisbursementAmount}`
@@ -604,9 +693,17 @@ export async function confirmDisbursement({
     createdByName: adminName || "Admin"
   });
 
-  // Update application status
+  // Update application status and timeline
   application.status = "DISBURSED";
   application.facilityId = facility._id;
+  application.timeline = application.timeline || [];
+  application.timeline.push({
+    status: "DISBURSED",
+    title: "Funds Disbursed & Facility Activated",
+    description: `Funds transferred via ${finalMethod}. Bank UTR/Ref: ${utr || "N/A"}. Facility ${facility.facilityNumber} is now Active.`,
+    timestamp: disbDate,
+    performedBy: adminName || "Admin"
+  });
   await application.save();
 
   await AuditLog.create({
@@ -618,7 +715,7 @@ export async function confirmDisbursement({
     note: `Disbursed ₹${offer.approvedAmount} for facility ${facility.facilityNumber}. UTR: ${utr || "N/A"}`
   });
 
-  return { facility, application };
+  return { facility, application, schedules: scheduleDocs };
 }
 
 /**
