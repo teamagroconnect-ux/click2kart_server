@@ -76,6 +76,17 @@ const customerSchema = new mongoose.Schema(
       failureReason: { type: String, default: "" },
       maxAmount: { type: Number, default: 0 }
     },
+    tradeCreditAutoPaySchedule: {
+      frequency: { type: String, enum: ["DAILY", "WEEKLY"], default: "WEEKLY" },
+      weeklyDebitDay: {
+        type: String,
+        enum: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
+        default: "MONDAY"
+      },
+      debitTime: { type: String, default: "10:00 AM" },
+      updatedAt: { type: Date, default: Date.now },
+      updatedBy: { type: String, default: "ADMIN" }
+    },
     bankDetails: {
       accountHolder: { type: String, default: "" },
       accountNumber: { type: String, default: "" },

@@ -51,12 +51,91 @@ const router = express.Router();
 // ==========================================
 
 /**
+ * Helper: Compute Next Trade Credit Auto-Debit Date & Time
+ */
+export function computeNextTradeDebit(schedule = {}, outstandingBalance = 0) {
+  const frequency = String(schedule?.frequency || "WEEKLY").toUpperCase();
+  const weeklyDebitDay = String(schedule?.weeklyDebitDay || "MONDAY").toUpperCase();
+  const debitTime = schedule?.debitTime || "10:00 AM";
+
+  let targetHour = 10;
+  let targetMinute = 0;
+  const timeMatch = String(debitTime).match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  if (timeMatch) {
+    let h = parseInt(timeMatch[1], 10);
+    const m = parseInt(timeMatch[2], 10);
+    const mer = timeMatch[3] ? timeMatch[3].toUpperCase() : null;
+    if (mer === "PM" && h < 12) h += 12;
+    if (mer === "AM" && h === 12) h = 0;
+    targetHour = h;
+    targetMinute = m;
+  }
+
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(now.getTime() + istOffset);
+
+  const dayMap = {
+    "SUNDAY": 0, "MONDAY": 1, "TUESDAY": 2, "WEDNESDAY": 3,
+    "THURSDAY": 4, "FRIDAY": 5, "SATURDAY": 6
+  };
+  const targetDayOfWeek = dayMap[weeklyDebitDay] !== undefined ? dayMap[weeklyDebitDay] : 1;
+
+  let nextDebitIST = new Date(nowIST);
+  nextDebitIST.setUTCHours(targetHour, targetMinute, 0, 0);
+
+  if (frequency === "DAILY") {
+    if (nowIST.getTime() >= nextDebitIST.getTime()) {
+      nextDebitIST.setUTCDate(nextDebitIST.getUTCDate() + 1);
+    }
+  } else {
+    const currentDay = nowIST.getUTCDay();
+    let daysUntil = (targetDayOfWeek - currentDay + 7) % 7;
+    if (daysUntil === 0 && nowIST.getTime() >= nextDebitIST.getTime()) {
+      daysUntil = 7;
+    }
+    nextDebitIST.setUTCDate(nextDebitIST.getUTCDate() + daysUntil);
+  }
+
+  const nextDebitDate = new Date(nextDebitIST.getTime() - istOffset);
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const dName = dayNames[nextDebitIST.getUTCDay()];
+  const dDate = nextDebitIST.getUTCDate();
+  const dMonth = monthNames[nextDebitIST.getUTCMonth()];
+  const dYear = nextDebitIST.getUTCFullYear();
+
+  const formattedDate = `${dName}, ${String(dDate).padStart(2, '0')} ${dMonth} ${dYear} at ${debitTime}`;
+  const dayLabel = weeklyDebitDay.charAt(0) + weeklyDebitDay.slice(1).toLowerCase();
+  const formattedSchedule = frequency === "DAILY" 
+    ? `Daily at ${debitTime}` 
+    : `Weekly on ${dayLabel}s at ${debitTime}`;
+
+  const numOutstanding = Math.max(0, Number(outstandingBalance || 0));
+
+  return {
+    frequency,
+    weeklyDebitDay,
+    debitTime,
+    nextDebitAt: nextDebitDate,
+    nextDebitFormatted: formattedDate,
+    formattedSchedule,
+    requiredBalance: numOutstanding,
+    isDuesPending: numOutstanding > 0,
+    instructions: numOutstanding > 0
+      ? `Maintain at least ₹${numOutstanding.toLocaleString('en-IN')} available balance in your linked bank account before ${debitTime} on ${dName}, ${String(dDate).padStart(2, '0')} ${dMonth} ${dYear} to avoid mandate bounce charges.`
+      : `All dues are clear. Next auto-debit will trigger on ${formattedDate} only if credit purchases are made.`
+  };
+}
+
+/**
  * Get current retailer's credit status and balance
  */
 router.get("/me", auth, requireRole("customer"), async (req, res) => {
   try {
     const customer = await Customer.findById(req.user.id).select(
-      "name phone email isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings isKycComplete autoPayMandate bankDetails"
+      "name phone email isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings isKycComplete autoPayMandate bankDetails tradeCreditAutoPaySchedule"
     );
 
     if (!customer) return res.status(404).json({ error: "customer_not_found" });
@@ -74,6 +153,8 @@ router.get("/me", auth, requireRole("customer"), async (req, res) => {
     const outstanding = Number(customer.outstandingBalance || 0);
     const utilization = limit > 0 ? Math.min(100, Math.max(0, Math.round(((limit - available) / limit) * 100))) : 0;
 
+    const autoPaySchedule = computeNextTradeDebit(customer.tradeCreditAutoPaySchedule, outstanding);
+
     res.json({
       isCreditEnabled: true,
       creditLimit: limit,
@@ -83,6 +164,7 @@ router.get("/me", auth, requireRole("customer"), async (req, res) => {
       utilization,
       autoPayMandate: customer.autoPayMandate || { status: "NOT_REGISTERED" },
       bankDetails: customer.bankDetails || {},
+      tradeCreditAutoPaySchedule: autoPaySchedule,
       deliverySettings: customer.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
     });
   } catch (err) {
@@ -1110,6 +1192,50 @@ router.post("/admin/retailers/:id/adjust", auth, requirePermission("customers"),
 });
 
 /**
+ * Configure retailer's Trade Credit AutoPay Schedule
+ */
+router.put("/admin/retailers/:id/autopay-schedule", auth, requirePermission("customers"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { frequency, weeklyDebitDay, debitTime } = req.body || {};
+
+  try {
+    const customer = await Customer.findById(req.params.id);
+    if (!customer) return res.status(404).json({ error: "retailer_not_found" });
+
+    if (frequency && !["DAILY", "WEEKLY"].includes(frequency.toUpperCase())) {
+      return res.status(400).json({ error: "invalid_frequency", message: "Frequency must be DAILY or WEEKLY" });
+    }
+
+    const validDays = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
+    if (weeklyDebitDay && !validDays.includes(weeklyDebitDay.toUpperCase())) {
+      return res.status(400).json({ error: "invalid_day", message: "Invalid weekly debit day" });
+    }
+
+    customer.tradeCreditAutoPaySchedule = {
+      frequency: (frequency || customer.tradeCreditAutoPaySchedule?.frequency || "WEEKLY").toUpperCase(),
+      weeklyDebitDay: (weeklyDebitDay || customer.tradeCreditAutoPaySchedule?.weeklyDebitDay || "MONDAY").toUpperCase(),
+      debitTime: debitTime || customer.tradeCreditAutoPaySchedule?.debitTime || "10:00 AM",
+      updatedAt: new Date(),
+      updatedBy: req.user.name || "Admin"
+    };
+
+    await customer.save();
+
+    const computed = computeNextTradeDebit(customer.tradeCreditAutoPaySchedule, customer.outstandingBalance);
+
+    res.json({
+      success: true,
+      message: "autopay_schedule_updated",
+      schedule: customer.tradeCreditAutoPaySchedule,
+      computed
+    });
+  } catch (err) {
+    console.error("PUT /admin/retailers/:id/autopay-schedule error:", err);
+    res.status(500).json({ error: "failed_to_update_schedule", message: err.message });
+  }
+});
+
+/**
  * List repayments for admin verification
  */
 router.get("/admin/repayments", auth, requirePermission("customers"), async (req, res) => {
@@ -1366,6 +1492,15 @@ router.put("/admin/business/settings", auth, requirePermission("customers"), asy
     if (maxCreditLimit !== undefined) settings.maxAmount = Number(maxCreditLimit);
     if (maxAmount !== undefined) settings.maxAmount = Number(maxAmount);
     if (req.body?.autoPayEnabled !== undefined) settings.autoPayEnabled = Boolean(req.body.autoPayEnabled);
+
+    if (req.body?.tradeCreditDefaultSchedule) {
+      const { frequency, weeklyDebitDay, debitTime } = req.body.tradeCreditDefaultSchedule;
+      settings.tradeCreditDefaultSchedule = {
+        frequency: frequency ? String(frequency).toUpperCase() : (settings.tradeCreditDefaultSchedule?.frequency || "WEEKLY"),
+        weeklyDebitDay: weeklyDebitDay ? String(weeklyDebitDay).toUpperCase() : (settings.tradeCreditDefaultSchedule?.weeklyDebitDay || "MONDAY"),
+        debitTime: debitTime || settings.tradeCreditDefaultSchedule?.debitTime || "10:00 AM"
+      };
+    }
 
     await settings.save();
 

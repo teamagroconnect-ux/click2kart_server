@@ -118,6 +118,15 @@ const creditProductSettingsSchema = new mongoose.Schema(
       type: Number,
       default: 24.0 // 24% p.a. on overdue principal
     },
+    tradeCreditDefaultSchedule: {
+      frequency: { type: String, enum: ["DAILY", "WEEKLY"], default: "WEEKLY" },
+      weeklyDebitDay: {
+        type: String,
+        enum: ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"],
+        default: "MONDAY"
+      },
+      debitTime: { type: String, default: "10:00 AM" }
+    },
     updatedBy: {
       type: String,
       default: "SYSTEM"
