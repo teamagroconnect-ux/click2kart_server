@@ -650,7 +650,15 @@ export async function confirmDisbursement({
     },
     nextDueDate: amort.schedule[0]?.dueDate,
     nextDueAmount: amort.schedule[0]?.totalDue,
-    maturityDate: amort.schedule[amort.schedule.length - 1]?.dueDate
+    maturityDate: amort.schedule[amort.schedule.length - 1]?.dueDate,
+    autoPayMandate: (customer?.autoPayMandate?.status === "ACTIVE") ? {
+      mandateId: customer.autoPayMandate.mandateId,
+      provider: customer.autoPayMandate.provider || "RAZORPAY",
+      status: "ACTIVE",
+      registeredAt: customer.autoPayMandate.registeredAt || new Date(),
+      lastDebitStatus: "AUTHORIZED",
+      failureReason: ""
+    } : { status: "NOT_REGISTERED" }
   });
 
   // Save all schedule instalments

@@ -371,7 +371,8 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     couponCode,
     razorpay_order_id,
     razorpay_payment_id,
-    razorpay_signature
+    razorpay_signature,
+    creditTerms
   } = req.body || {};
 
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
@@ -560,6 +561,13 @@ router.post("/", auth, requireRole("customer"), async (req, res) => {
     localDelivery: deliveryChannel === "LOCAL_DELIVERY" ? { status: "PENDING" } : undefined,
     creditTxnId,
     creditAmountUsed: paymentMethod === "CREDIT" ? payableTotal : 0,
+    creditTerms: (paymentMethod === "CREDIT" || creditTxnId) ? (creditTerms || {
+      tenureDays: 30,
+      autoPaySchedule: "WEEKLY",
+      weeklyDebitDay: "MONDAY",
+      installmentCount: 4,
+      installmentAmount: Math.ceil(payableTotal / 4)
+    }) : undefined,
     razorpayOrderId: razorpayOrder?.id,
     notes: notes || "",
     codAdvancePercent: paymentMethod === "COD_20" ? 20 : 0,
@@ -1014,7 +1022,7 @@ router.post("/verify-payment", async (req, res) => {
 
 // Manual Payment Submission (UPI/Bank) - create order pending approval
 router.post("/manual-submit", auth, requireRole("customer"), async (req, res) => {
-  const { items, amountPaid, utr, note, codAdvance20, couponCode, deliveryChannel: requestedChannel, applyCredit } = req.body || {};
+  const { items, amountPaid, utr, note, codAdvance20, couponCode, deliveryChannel: requestedChannel, applyCredit, creditTerms } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "no_items" });
   const cust = await Customer.findById(req.user.id).select("name phone email isKycComplete kyc address deliverySettings isCreditEnabled availableCredit creditLimit usedCredit outstandingBalance");
   if (!cust) return res.status(404).json({ error: "customer_not_found" });
@@ -1119,6 +1127,13 @@ router.post("/manual-submit", auth, requireRole("customer"), async (req, res) =>
       manualPayment: { amountPaid: Number(amountPaid || remainingToPay), utr: String(utr || ""), note: String(note || "") },
       creditTxnId,
       creditAmountUsed: creditToUse,
+      creditTerms: creditToUse > 0 ? (creditTerms || {
+        tenureDays: 30,
+        autoPaySchedule: "WEEKLY",
+        weeklyDebitDay: "MONDAY",
+        installmentCount: 4,
+        installmentAmount: Math.ceil(creditToUse / 4)
+      }) : undefined,
       splitPayment: creditToUse > 0 ? {
         creditAmount: creditToUse,
         onlineAmount: remainingToPay,

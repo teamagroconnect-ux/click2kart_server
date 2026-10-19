@@ -47,6 +47,20 @@ const orderSchema = new mongoose.Schema(
       onlineAmount: { type: Number, default: 0 },
       onlineMethod: { type: String, enum: ["RAZORPAY", "MANUAL", "NONE"], default: "NONE" }
     },
+    creditTerms: {
+      tenureDays: { type: Number, default: 30 },
+      autoPaySchedule: { type: String, enum: ["DAILY", "WEEKLY", "LUMP_SUM"], default: "WEEKLY" },
+      weeklyDebitDay: { type: String, default: "MONDAY" },
+      installmentCount: { type: Number, default: 4 },
+      installmentAmount: { type: Number, default: 0 },
+      nextDebitDate: { type: Date },
+      installments: [{
+        installmentNumber: { type: Number },
+        dueDate: { type: Date },
+        amount: { type: Number },
+        status: { type: String, enum: ["PENDING", "PAID"], default: "PENDING" }
+      }]
+    },
     paymentStatus: { type: String, enum: ["PENDING", "PAYMENT_SUBMITTED", "PARTIAL", "PAID", "FAILED", "REFUNDED"], default: "PENDING" },
     razorpayOrderId: { type: String },
     razorpayPaymentId: { type: String },

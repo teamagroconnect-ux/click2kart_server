@@ -514,6 +514,25 @@ const handleTradeMandateVerify = async (req, res) => {
     };
     await customer.save();
 
+    // Unified Mandate: sync to all facilities of this customer
+    try {
+      await BusinessCreditFacility.updateMany(
+        { retailerId: customer._id },
+        {
+          $set: {
+            "autoPayMandate.mandateId": razorpayPaymentId,
+            "autoPayMandate.provider": "RAZORPAY",
+            "autoPayMandate.status": "ACTIVE",
+            "autoPayMandate.registeredAt": new Date(),
+            "autoPayMandate.lastDebitStatus": "AUTHORIZED",
+            "autoPayMandate.failureReason": ""
+          }
+        }
+      );
+    } catch (e) {
+      console.warn("Unified mandate facility sync error:", e);
+    }
+
     await CreditLedger.create({
       retailerId: customer._id,
       amount: 0,
@@ -951,7 +970,6 @@ router.post("/business/mandate/verify", auth, requireRole("customer"), async (re
       }
     }
 
-    // Activate AutoPay Mandate on facility
     facility.autoPayMandate = {
       mandateId: razorpayPaymentId,
       provider: "RAZORPAY",
@@ -961,6 +979,25 @@ router.post("/business/mandate/verify", auth, requireRole("customer"), async (re
       failureReason: ""
     };
     await facility.save();
+
+    // Unified Mandate: sync to Customer model for trade credit
+    try {
+      const cust = await Customer.findById(req.user.id);
+      if (cust) {
+        cust.autoPayMandate = {
+          mandateId: razorpayPaymentId,
+          provider: "RAZORPAY",
+          status: "ACTIVE",
+          registeredAt: new Date(),
+          lastDebitStatus: "AUTHORIZED",
+          failureReason: "",
+          maxAmount: cust.creditLimit || 50000
+        };
+        await cust.save();
+      }
+    } catch (e) {
+      console.warn("Unified mandate customer sync error:", e);
+    }
 
     // Log transaction
     await BusinessCreditTransaction.create({
@@ -1017,6 +1054,12 @@ router.get("/admin/retailers", auth, requirePermission("customers"), async (req,
       filter.isCreditEnabled = true;
     } else if (status === "disabled") {
       filter.isCreditEnabled = { $ne: true };
+    } else if (status === "mandate_active") {
+      filter["autoPayMandate.status"] = "ACTIVE";
+    } else if (status === "bank_linked") {
+      filter["bankDetails.accountNumber"] = { $exists: true, $ne: "" };
+    } else if (status === "has_dues") {
+      filter.outstandingBalance = { $gt: 0 };
     }
 
     const p = Math.max(1, parseInt(page));
@@ -1040,7 +1083,9 @@ router.get("/admin/retailers", auth, requirePermission("customers"), async (req,
           totalAvailable: { $sum: { $cond: [{ $eq: ["$isCreditEnabled", true] }, "$availableCredit", 0] } },
           totalUsed: { $sum: { $cond: [{ $eq: ["$isCreditEnabled", true] }, "$usedCredit", 0] } },
           totalOutstanding: { $sum: { $cond: [{ $eq: ["$isCreditEnabled", true] }, "$outstandingBalance", 0] } },
-          enabledCount: { $sum: { $cond: [{ $eq: ["$isCreditEnabled", true] }, 1, 0] } }
+          enabledCount: { $sum: { $cond: [{ $eq: ["$isCreditEnabled", true] }, 1, 0] } },
+          mandatesActiveCount: { $sum: { $cond: [{ $eq: ["$autoPayMandate.status", "ACTIVE"] }, 1, 0] } },
+          bankVerifiedCount: { $sum: { $cond: [{ $and: [{ $ne: ["$bankDetails.accountNumber", ""] }, { $ifNull: ["$bankDetails.accountNumber", false] }] }, 1, 0] } }
         }
       }
     ]);
@@ -1050,7 +1095,9 @@ router.get("/admin/retailers", auth, requirePermission("customers"), async (req,
       totalAvailable: 0,
       totalUsed: 0,
       totalOutstanding: 0,
-      enabledCount: 0
+      enabledCount: 0,
+      mandatesActiveCount: 0,
+      bankVerifiedCount: 0
     };
 
     res.json({
@@ -1063,7 +1110,9 @@ router.get("/admin/retailers", auth, requirePermission("customers"), async (req,
         totalAvailable: stats.totalAvailable,
         totalUsed: stats.totalUsed,
         totalOutstanding: stats.totalOutstanding,
-        enabledCount: stats.enabledCount
+        enabledCount: stats.enabledCount,
+        mandatesActiveCount: stats.mandatesActiveCount || 0,
+        bankVerifiedCount: stats.bankVerifiedCount || 0
       }
     });
   } catch (err) {
@@ -1232,6 +1281,40 @@ router.put("/admin/retailers/:id/autopay-schedule", auth, requirePermission("cus
   } catch (err) {
     console.error("PUT /admin/retailers/:id/autopay-schedule error:", err);
     res.status(500).json({ error: "failed_to_update_schedule", message: err.message });
+  }
+});
+
+/**
+ * Admin view or update retailer bank details
+ */
+router.put("/admin/retailers/:id/bank", auth, requirePermission("customers"), async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "invalid_id" });
+  const { accountHolder, bankName, accountNumber, ifsc, accountType, isVerified } = req.body || {};
+
+  try {
+    const customer = await Customer.findById(req.params.id);
+    if (!customer) return res.status(404).json({ error: "retailer_not_found" });
+
+    customer.bankDetails = {
+      accountHolder: accountHolder !== undefined ? String(accountHolder).trim() : (customer.bankDetails?.accountHolder || ""),
+      bankName: bankName !== undefined ? String(bankName).trim() : (customer.bankDetails?.bankName || ""),
+      accountNumber: accountNumber !== undefined ? String(accountNumber).trim() : (customer.bankDetails?.accountNumber || ""),
+      ifsc: ifsc !== undefined ? String(ifsc).toUpperCase().trim() : (customer.bankDetails?.ifsc || ""),
+      accountType: accountType || customer.bankDetails?.accountType || "CURRENT",
+      isVerified: isVerified !== undefined ? Boolean(isVerified) : (customer.bankDetails?.isVerified ?? true),
+      verifiedAt: isVerified ? (customer.bankDetails?.verifiedAt || new Date()) : customer.bankDetails?.verifiedAt
+    };
+
+    await customer.save();
+
+    res.json({
+      success: true,
+      message: "bank_details_updated",
+      bankDetails: customer.bankDetails
+    });
+  } catch (err) {
+    console.error("PUT /admin/retailers/:id/bank error:", err);
+    res.status(500).json({ error: "failed_to_update_bank", message: err.message });
   }
 });
 
