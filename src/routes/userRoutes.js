@@ -20,7 +20,7 @@ router.get("/me", auth, async (req, res) => {
   }
 
   const user = await Customer.findById(req.user.id).select(
-    "name email phone whatsappNumber address isKycComplete kyc dob isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings"
+    "name email phone whatsappNumber address isKycComplete kyc dob isCreditEnabled creditLimit availableCredit usedCredit outstandingBalance deliverySettings bankDetails autoPayMandate tradeCreditAutoPaySchedule"
   );
   if (!user) return res.status(404).json({ error: "not_found" });
   res.json({
@@ -39,7 +39,10 @@ router.get("/me", auth, async (req, res) => {
     availableCredit: user.availableCredit || 0,
     usedCredit: user.usedCredit || 0,
     outstandingBalance: user.outstandingBalance || 0,
-    deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false }
+    deliverySettings: user.deliverySettings || { delhiveryEnabled: true, localDeliveryEnabled: false },
+    bankDetails: user.bankDetails || {},
+    autoPayMandate: user.autoPayMandate || { status: "NOT_REGISTERED" },
+    tradeCreditAutoPaySchedule: user.tradeCreditAutoPaySchedule || {}
   });
 });
 
